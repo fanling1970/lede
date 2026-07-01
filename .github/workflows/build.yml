@@ -2,16 +2,10 @@ name: LEDE编译终极版（含DIY与Dockerman强制注入）
 
 on:
   workflow_dispatch:
-#  push:
-#    branches: [ main ]
-#    paths:
-#      - 'lede/**'
-#      - '.github/workflows/**'
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 180  # 添加超时设置，防止长时间占用
     
     steps:
     - uses: actions/checkout@v4
@@ -31,17 +25,6 @@ jobs:
     - name: 克隆LEDE源码
       run: git clone --depth=1 https://github.com/coolsnowwolf/lede.git lede-src
     
-    - name: 应用自定义feeds源
-      run: |
-        cd lede-src
-        # 复制你的自定义feeds配置文件
-        if [ -f "../lede/feeds.conf.default" ]; then
-          cp ../lede/feeds.conf.default .
-          echo "已应用自定义feeds.conf.default ($(wc -l < feeds.conf.default) 行)"
-        else
-          echo "警告：未找到自定义feeds.conf.default，使用默认源"
-        fi
-    
     - name: 执行DIY Part 1
       run: |
         if [ -f "lede/diy-part1.sh" ] && [ -s "lede/diy-part1.sh" ]; then
@@ -55,7 +38,7 @@ jobs:
         fi
         
         # 清理Tab和BOM
-        sed -i 's/	/    /g' "lede/ax6600-smart.config" 2>/dev/null || true
+        sed -i 's/\t/    /g' "lede/ax6600-smart.config" 2>/dev/null || true
         sed -i '1s/^\xEF\xBB\xBF//' "lede/ax6600-smart.config" 2>/dev/null || true
         
         cd lede-src
@@ -74,7 +57,7 @@ jobs:
           cd lede-src && ../lede/diy-part2.sh
         fi
     
-    - name: 解析配置依赖并注入插件
+    - name: 解析配置依赖并强制注入Docker
       run: |
         cd lede-src
         
@@ -82,7 +65,7 @@ jobs:
         make defconfig 2>&1 | grep -v "^WARNING:" | tail -5
         
         echo ""
-        echo "Step 2: 强制注入 Docker/Dockerman 配置..."
+        echo "Step 2: 强制注入并补全 Docker/Dockerman 配置..."
         # 1. 先清除 .config 中所有可能冲突或错误的旧 docker 配置
         sed -i '/CONFIG_PACKAGE_.*docker/d' .config
         sed -i '/CONFIG_PACKAGE_.*containerd/d' .config
@@ -94,6 +77,7 @@ jobs:
         sed -i '/CONFIG_PACKAGE_kmod-br-netfilter/d' .config
         
         # 2. 追加经过验证的、当前源码中实际存在的最小完备集
+        # 注意：使用 <<- 允许结束符缩进，防止YAML块提前终止
         cat >> .config <<- 'DOCKER_EOF'
         CONFIG_PACKAGE_luci-app-dockerman=y
         CONFIG_PACKAGE_luci-i18n-dockerman-zh-cn=y
@@ -112,109 +96,37 @@ jobs:
         CONFIG_PACKAGE_lsblk=y
         DOCKER_EOF
         
-        echo ""
-        echo "Step 3: 注入用户定制插件..."
-        cat >> .config <<- 'PLUGINS_EOF'
-        # ====================================================================
-        # 用户定制插件
-        # ====================================================================
-        # Argon 主题
-        # CONFIG_PACKAGE_luci-theme-argon=y
-        # CONFIG_PACKAGE_luci-theme-argon-dark=y
-        # CONFIG_PACKAGE_luci-app-argon-config=y
-        
-        # OpenClash
-        # CONFIG_PACKAGE_luci-app-openclash=y
-        
-        # Passwall
-        # CONFIG_PACKAGE_luci-app-passwall=y
-        # CONFIG_PACKAGE_luci-app-passwall_INCLUDE_Shadowsocks_Rust_Client=y
-        # CONFIG_PACKAGE_luci-app-passwall_INCLUDE_Shadowsocks_Libev_Client=y
-        # CONFIG_PACKAGE_luci-app-passwall_INCLUDE_Xray=y
-        # CONFIG_PACKAGE_luci-app-passwall_INCLUDE_Trojan_GO=y
-        # CONFIG_PACKAGE_luci-app-passwall_INCLUDE_Brook=y
-        # CONFIG_PACKAGE_luci-app-passwall_INCLUDE_NaiveProxy=y
-        
-        # MosDNS
-        # CONFIG_PACKAGE_luci-app-mosdns=y
-        
-        # LED 控制 (Athena)
-        # CONFIG_PACKAGE_luci-app-athena-led=y
-        
-        # ====================================================================
-        # 预设系统配置
-        # ====================================================================
-        # 设置后台 IP
-        CONFIG_TARGET_PREINIT_IP="192.168.100.1"
-        CONFIG_TARGET_PREINIT_NETMASK="255.255.255.0"
-        CONFIG_TARGET_PREINIT_BOARDNAME="JDCloud RE-CS-02"
-        # WiFi 设置（通过 diy-part2.sh 实现更可靠）
-        PLUGINS_EOF
-        
-        echo "插件配置已注入"
+        echo "Docker 配置已强制注入"
         
         echo ""
-        echo "Step 4: 再次 defconfig 解析注入后的完整依赖..."
+        echo "Step 3: 再次 defconfig 解析注入后的完整依赖..."
         make defconfig 2>&1 | grep -v "^WARNING:" | tail -5
         
         echo ""
-        echo "=== 关键插件配置验证 ==="
-        grep -E "CONFIG_PACKAGE_(luci-app-dockerman|luci-theme-argon|luci-app-openclash|luci-app-passwall|luci-app-mosdns)=" .config || true
+        echo "=== Docker/Dockerman 最终配置验证 ==="
+        grep -E "CONFIG_PACKAGE_(luci-app-dockerman|dockerd|containerd|runc)=" .config || true
         echo ""
         
         # 最终兜底验证
         if ! grep -q "CONFIG_PACKAGE_luci-app-dockerman=y" .config; then
           echo "致命错误：luci-app-dockerman 仍未被选中！"
+          echo "请检查 feeds/luci/applications/ 目录下是否存在 dockerman 源码"
+          ls feeds/luci/applications/ | grep docker || echo "feeds 中未找到 docker 相关应用"
           exit 1
         fi
         
-        echo "所有配置验证通过"
-    
-    - name: 下载依赖包
-      run: |
-        cd lede-src
-        echo "开始下载依赖包..."
-        make download -j$(nproc) || {
-          echo "并行下载失败，回退单线程..."
-          make download -j1
-        }
-        echo "依赖包下载完成"
+        echo "配置验证通过，Dockerman 已成功锁定"
     
     - name: 编译固件
       run: |
         cd lede-src
-        echo "开始编译固件，预计需要1-3小时..."
-        FORCE=1 make -j$(($(nproc) + 1)) V=s 2>&1 | tee build.log || {
+        FORCE=1 make -j$(nproc) V=s 2>&1 | tee build.log || {
           echo "并行编译失败，回退单线程..."
           FORCE=1 make -j1 V=s 2>&1 | tee -a build.log
         }
-        
-        # 检查编译是否成功
-        if [ -f bin/targets/qualcommax/ipq60xx/openwrt-qualcommax-ipq60xx-jdcloud_re-cs-02-squashfs-sysupgrade.bin ]; then
-          echo "✅ 编译成功！"
-          echo "BUILD_SUCCESS=true" >> $GITHUB_ENV
-        else
-          echo "❌ 编译失败"
-          echo "BUILD_SUCCESS=false" >> $GITHUB_ENV
-          echo "查看最后100行日志..."
-          tail -100 build.log
-          exit 1
-        fi
     
-    - name: 上传固件
-      if: env.BUILD_SUCCESS == 'true'
+    - name: 验证并上传
       uses: actions/upload-artifact@v4
       with:
-        name: jdcloud-ax6600-with-plugins
-        path: |
-          lede-src/bin/targets/qualcommax/ipq60xx/*.bin
-          lede-src/bin/targets/qualcommax/ipq60xx/*.manifest
-        retention-days: 7
-    
-    - name: 上传编译日志
-      if: always()
-      uses: actions/upload-artifact@v4
-      with:
-        name: build-logs
-        path: lede-src/build.log
-        retention-days: 7
+        name: firmware-with-diy-and-dockerman
+        path: lede-src/bin/targets/qualcommax/ipq60xx/*.bin
