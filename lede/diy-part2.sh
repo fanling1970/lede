@@ -18,8 +18,6 @@ echo "开始配置基础网络和WiFi..."
 # 设置LAN口IP为192.168.100.1
 uci set network.lan.ipaddr='192.168.100.1'
 uci set network.lan.netmask='255.255.255.0'
-uci set network.lan.gateway='192.168.100.1'
-uci set network.lan.dns='192.168.100.1'
 uci commit network
 
 # 设置无线网络 - radio0 (5G)
