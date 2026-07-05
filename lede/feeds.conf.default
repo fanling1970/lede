@@ -1,16 +1,23 @@
 # 核心feeds（使用coolsnowwolf源）
 src-git packages https://github.com/coolsnowwolf/packages
-src-git luci https://github.com/coolsnowwolf/luci
+# src-git luci https://github.com/coolsnowwolf/luci
+src-git luci https://github.com/coolsnowwolf/luci.git;openwrt-23.05
 src-git routing https://github.com/coolsnowwolf/routing
-src-git telephony https://github.com/coolsnowwolf/telephony
+src-git telephony https://github.com/coolsnowwolf/telephony.git
 
 # 第三方插件源（只保留kenzo和small，它们已经包含了所有需要的插件）
-# src-git kenzo https://github.com/kenzok8/openwrt-packages.git
-# src-git small https://github.com/kenzok8/small.git
+src-git kenzo https://github.com/kenzok8/openwrt-packages.git
+src-git small https://github.com/kenzok8/small.git
+# src-git smpackage https://github.com/kenzok8/small-package
+# src-git helloworld https://github.com/fw876/helloworld
 
-# Argon 主题
-# src-git argon https://github.com/jerrykuku/luci-theme-argon;master
-# src-git argon-config https://github.com/jerrykuku/luci-app-argon-config;master
+# ✅ Argon 官方源（推荐，避免 kenzok8 版本滞后）
+src-git argon https://github.com/jerrykuku/luci-theme-argon
+
+# store商店和quickstart首页
+src-git istore https://github.com/linkease/istore;main
+src-git nas https://github.com/linkease/nas-packages.git;master
+src-git nas_luci https://github.com/linkease/nas-packages-luci.git;main
 
 # 注释掉有问题的源
 # src-git argon_theme https://github.com/jerrykuku/luci-theme-argon.git
