@@ -11,14 +11,13 @@
 
 name: lede
 
-# 仅保留手动触发，关闭所有自动编译
+# 仅保留手动触发，关闭自动编译
 on:
   workflow_dispatch:
 
 env:
   REPO_URL: https://github.com/coolsnowwolf/lede.git
   REPO_BRANCH: master
-  # 指定固定提交哈希
   FIX_COMMIT: de1795d
   FEEDS_CONF: lede/feeds.conf.default
   CONFIG_FILE: lede/.config
@@ -39,14 +38,32 @@ jobs:
       fileDate: ${{ env.FILE_DATE }}
 
     steps:
-    - name: 磁盘清理前查看空间占用
+    - name: 清理前查看磁盘占用
       run: |
-        echo "Before freeing up disk space"
-        echo "=============================================================================="
+        echo "===== 清理前磁盘信息 ====="
         df -hT
-        echo "=============================================================================="
 
-    - name: 磁盘空间优化工具处理
+    # 第一步优先执行大规模空间释放（关键修复顺序）
+    - name: 最大化构建磁盘空间
+      uses: easimon/maximize-build-space@master
+      with:
+        root-reserve-mb: 3072
+        swap-size-mb: 1
+        remove-dotnet: 'true'
+        remove-android: 'true'
+        remove-haskell: 'true'
+        remove-codeql: 'true'
+        remove-docker-images: 'true'
+
+    - name: 额外强制删除无用文件释放空间
+      run: |
+        sudo rm -rf /usr/local/lib/android /opt/ghc /usr/share/dotnet
+        sudo rm -rf /usr/local/graalvm /usr/local/.ghcup /usr/local/share/powershell
+        sudo rm -rf /usr/local/share/chromium /usr/local/lib/node_modules
+        sudo apt-get -qq autoremove --purge -y
+        sudo apt-get -qq clean
+
+    - name: 精细化磁盘空间优化
       uses: hugoalh/disk-space-optimizer-ghaction@v0.8.1
       with:
         operate_sudo: "True"
@@ -67,23 +84,10 @@ jobs:
         npm_clean: "True"
         os_swap: "True"
 
-    - name: 最大化构建可用磁盘空间
-      uses: easimon/maximize-build-space@master
-      with:
-        root-reserve-mb: 2048
-        swap-size-mb: 1
-        remove-dotnet: 'true'
-        remove-android: 'true'
-        remove-haskell: 'true'
-        remove-codeql: 'true'
-        remove-docker-images: 'true'
-
-    - name: 磁盘清理完成后查看空间
+    - name: 磁盘清理完成后查看占用
       run: |
-        echo "Free up disk space complete"
-        echo "=============================================================================="
+        echo "===== 清理后磁盘信息 ====="
         df -hT
-        echo "=============================================================================="
 
     - name: 拉取仓库本地配置文件
       uses: actions/checkout@main
@@ -100,21 +104,17 @@ jobs:
         mkisofs msmtp nano ninja-build p7zip p7zip-full patch pkgconf python2.7 python3 python3-pyelftools \
         libpython3-dev qemu-utils rsync scons squashfs-tools subversion swig texinfo uglifyjs upx-ucl unzip \
         vim wget xmlto xxd zlib1g-dev python3-setuptools
-        sudo -E apt-get -qq autoremove --purge
-        sudo -E apt-get -qq clean
-        sudo rm -rf /etc/apt/sources.list.d/* /usr/local/lib/android /opt/ghc /usr/share/dotnet /usr/local/graalvm /usr/local/.ghcup \
-        /usr/local/share/powershell /usr/local/share/chromium /usr/local/lib/node_modules
         sudo timedatectl set-timezone "$TZ"
         sudo chown $USER:$GROUPS $GITHUB_WORKSPACE
 
-    - name: 克隆LEDE源码并切换至指定提交de1795d
+    - name: 克隆LEDE源码并锁定指定提交de1795d
       working-directory: ./
       run: |
-        git clone --depth=1 $REPO_URL -b $REPO_BRANCH openwrt
+        # 不使用--depth浅克隆，完整拉取才能正常切换历史commit
+        git clone $REPO_URL -b $REPO_BRANCH openwrt
         cd openwrt
-        # 拉取指定提交
-        git fetch origin $FIX_COMMIT
         git checkout $FIX_COMMIT
+        echo "当前源码提交哈希: $(git rev-parse HEAD)"
 
     - name: 替换feeds配置并执行DIY第一脚本
       run: |
@@ -143,14 +143,13 @@ jobs:
         cd openwrt
         make defconfig
         make download -j8
-        find dl -size -1024c -exec ls -l {} \;
         find dl -size -1024c -exec rm -f {} \;
 
     - name: 多线程编译固件镜像
       id: compile
       run: |
         cd openwrt
-        echo -e "$(nproc) thread compile"
+        echo "$(nproc) 线程编译"
         make -j$(nproc) || make -j1 || make -j1 V=s
         echo "status=success" >> $GITHUB_OUTPUT
         grep '^CONFIG_TARGET.*DEVICE.*=y' .config | sed -r 's/.*DEVICE_(.*)=y/\1/' > DEVICE_NAME
