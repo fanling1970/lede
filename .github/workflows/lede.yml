@@ -11,6 +11,7 @@
 
 name: lede
 
+# 仅保留手动触发，关闭所有自动编译
 on:
   workflow_dispatch:
 
@@ -36,14 +37,14 @@ jobs:
       fileDate: ${{ env.FILE_DATE }}
 
     steps:
-    - name: 清理前查看磁盘空间
+    - name: 磁盘清理前查看空间占用
       run: |
         echo "Before freeing up disk space"
         echo "=============================================================================="
         df -hT
         echo "=============================================================================="
 
-    - name: 优化磁盘空间
+    - name: 磁盘空间优化工具处理
       uses: hugoalh/disk-space-optimizer-ghaction@v0.8.1
       with:
         operate_sudo: "True"
@@ -64,7 +65,7 @@ jobs:
         npm_clean: "True"
         os_swap: "True"
 
-    - name: 最大化编译空间
+    - name: 最大化构建可用磁盘空间
       uses: easimon/maximize-build-space@master
       with:
         root-reserve-mb: 2048
@@ -75,17 +76,17 @@ jobs:
         remove-codeql: 'true'
         remove-docker-images: 'true'
 
-    - name: 磁盘空间清理完成
+    - name: 磁盘清理完成后查看空间
       run: |
         echo "Free up disk space complete"
         echo "=============================================================================="
         df -hT
         echo "=============================================================================="
 
-    - name: 检出仓库代码
+    - name: 拉取仓库本地配置文件
       uses: actions/checkout@main
 
-    - name: 初始化编译环境
+    - name: 安装OpenWrt编译全套依赖
       env:
         DEBIAN_FRONTEND: noninteractive
       run: |
@@ -104,25 +105,25 @@ jobs:
         sudo timedatectl set-timezone "$TZ"
         sudo chown $USER:$GROUPS $GITHUB_WORKSPACE
 
-    - name: 克隆源码
+    - name: 克隆LEDE源码仓库
       working-directory: ./
       run: |
         git clone --depth=1 $REPO_URL -b $REPO_BRANCH openwrt
 
-    - name: 加载自定义feeds
+    - name: 替换feeds配置并执行DIY第一脚本
       run: |
         [ -e $FEEDS_CONF ] && mv $FEEDS_CONF openwrt/feeds.conf.default
         chmod +x $DIY_P1_SH
         cd openwrt
         $GITHUB_WORKSPACE/$DIY_P1_SH
 
-    - name: 更新feeds
+    - name: 更新软件源列表
       run: cd openwrt && ./scripts/feeds update -a
 
-    - name: 安装feeds
+    - name: 安装全部软件包依赖
       run: cd openwrt && ./scripts/feeds install -a
 
-    - name: 加载自定义配置
+    - name: 导入固件配置并执行DIY第二脚本
       run: |
         [ -e files ] && mv files openwrt/files
         [ -e $CONFIG_FILE ] && mv $CONFIG_FILE openwrt/.config
@@ -130,7 +131,7 @@ jobs:
         cd openwrt
         $GITHUB_WORKSPACE/$DIY_P2_SH
 
-    - name: 下载软件包
+    - name: 预下载全部源码压缩包
       id: package
       run: |
         cd openwrt
@@ -139,7 +140,7 @@ jobs:
         find dl -size -1024c -exec ls -l {} \;
         find dl -size -1024c -exec rm -f {} \;
 
-    - name: 编译固件
+    - name: 多线程编译固件镜像
       id: compile
       run: |
         cd openwrt
@@ -150,18 +151,18 @@ jobs:
         [ -s DEVICE_NAME ] && echo "DEVICE_NAME=_$(cat DEVICE_NAME)" >> $GITHUB_ENV
         echo "FILE_DATE=_$(date +"%Y%m%d%H%M")" >> $GITHUB_ENV
 
-    - name: 查看空间使用情况
+    - name: 编译结束查看磁盘占用
       if: ${{ !cancelled() }}
       run: df -hT
 
-    - name: 上传bin目录
+    - name: 上传完整bin目录构建产物
       uses: actions/upload-artifact@main
       if: steps.compile.outputs.status == 'success' && env.UPLOAD_BIN_DIR == 'true'
       with:
         name: lede_bin${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
         path: openwrt/bin
 
-    - name: 整理文件
+    - name: 筛选固件存放路径
       id: organize
       if: env.UPLOAD_FIRMWARE == 'true' && !cancelled()
       run: |
@@ -170,14 +171,14 @@ jobs:
         echo "FIRMWARE=$PWD" >> $GITHUB_ENV
         echo "status=success" >> $GITHUB_OUTPUT
 
-    - name: 上传固件目录
+    - name: 上传固件镜像构建产物
       uses: actions/upload-artifact@main
       if: steps.organize.outputs.status == 'success' && !cancelled()
       with:
         name: Lede_firmware${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
         path: ${{ env.FIRMWARE }}
 
-    - name: 上传到奶牛快传
+    - name: 上传固件至奶牛快传
       id: cowtransfer
       if: steps.organize.outputs.status == 'success' && env.UPLOAD_COWTRANSFER == 'true' && !cancelled()
       run: |
@@ -186,7 +187,7 @@ jobs:
         echo "::warning file=cowtransfer.com::$(cat cowtransfer.log | grep https)"
         echo "url=$(cat cowtransfer.log | grep https | cut -f3 -d" ")" >> $GITHUB_OUTPUT
 
-    - name: 上传到WeTransfer
+    - name: 上传固件至WeTransfer
       id: wetransfer
       if: steps.organize.outputs.status == 'success' && env.UPLOAD_WETRANSFER == 'true' && !cancelled()
       run: |
@@ -195,7 +196,7 @@ jobs:
         echo "::warning file=wetransfer.com::$(cat wetransfer.log | grep https)"
         echo "url=$(cat wetransfer.log | grep https | cut -f3 -d" ")" >> $GITHUB_OUTPUT
 
-    - name: 生成发布标签
+    - name: 生成发布版本标签
       id: tag
       if: env.UPLOAD_RELEASE == 'true' && !cancelled()
       run: |
@@ -205,8 +206,8 @@ jobs:
         [ $UPLOAD_WETRANSFER = true ] && echo "🔗 [WeTransfer](${{ steps.wetransfer.outputs.url }})" >> release.txt
         echo "status=success" >> $GITHUB_OUTPUT
 
-    - name: 上传固件到Release
-      uses: softprops/gh-release@v1
+    - name: 发布固件到GitHub Release
+      uses: softprops/action-gh-release@v1
       if: steps.tag.outputs.status == 'success' && !cancelled()
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -215,13 +216,13 @@ jobs:
         body_path: release.txt
         files: ${{ env.FIRMWARE }}/*
 
-    - name: 删除工作流运行记录
+    - name: 自动清理过期工作流运行记录
       uses: Mattraks/delete-workflow-runs@v2
       with:
         retain_days: 1
         keep_minimum_runs: 3
 
-    - name: 删除旧版本Release
+    - name: 删除旧版GitHub Release
       uses: dev-drprasad/delete-older-releases@v0.1.0
       if: env.UPLOAD_RELEASE == 'true' && !cancelled()
       with:
