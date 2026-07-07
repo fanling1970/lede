@@ -1,0 +1,52 @@
+name: 编译 JDCloud 雅典娜固件
+
+on:
+  # 允许手动触发编译
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装编译依赖
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential clang libncurses5-dev gawk flex git quilt libssl-dev libelf-dev bc python3 python3-distutils rsync
+
+      - name: 克隆 LiBwrt 源码
+        run: |
+          git clone --depth 1 --single-branch https://github.com/LiBwrt/openwrt-6.x.git libwrt
+
+      - name: 复制自定义配置文件
+        run: |
+          # 复制您提供的四个核心配置文件到源码目录
+          cp diy-part1.sh libwrt/
+          cp diy-part2.sh libwrt/
+          cp feeds.conf.default libwrt/
+          cp info.config libwrt/.config
+
+      - name: 更新 Feeds 并安装
+        working-directory: ./libwrt
+        run: |
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+
+      - name: 下载编译所需库文件 (dl)
+        working-directory: ./libwrt
+        run: make download -j$(nproc)
+
+      - name: 编译固件
+        working-directory: ./libwrt
+        run: |
+          # 这里使用 -j1 是为了防止内存溢出导致编译失败，您可以改为 -j$(nproc) 以加快速度
+          make -j$(nproc) V=s
+
+      - name: 上传编译产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: JDCloud_Re-CS-02_Firmware
+          path: libwrt/bin/targets/qualcommax/ipq60xx/
