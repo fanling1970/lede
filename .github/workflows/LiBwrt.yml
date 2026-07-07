@@ -1,20 +1,20 @@
 name: LiBwrt编译 JDCloud 雅典娜(RE-CS-02) 固件
 
-# 仅允许手动触发，无任何自动触发条件
+# 仅手动触发，无任何自动触发
 on:
   workflow_dispatch:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    # ✅ 官方推荐 Ubuntu 20.04，最稳定
+    runs-on: ubuntu-20.04
 
     steps:
-      - name: 清理Runner冗余空间释放磁盘
+      - name: 清理 Runner 冗余文件释放磁盘
         run: |
-          # 删除Runner预装的无关开发环境，避免编译中途磁盘占满
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache
           sudo apt-get clean
-          df -h  # 输出剩余磁盘空间，方便排查问题
+          df -h
 
       - name: 检出当前仓库配置
         uses: actions/checkout@v4
@@ -22,52 +22,50 @@ jobs:
       - name: 设置时区为上海
         run: sudo timedatectl set-timezone 'Asia/Shanghai'
 
-      - name: 安装OpenWrt编译依赖（适配Ubuntu 24.04）
+      - name: 安装 OpenWrt 编译依赖（官方推荐清单）
         run: |
           sudo apt-get update
-          # Ubuntu 24.04已废弃python3-distutils，替换为python3-setuptools兼容
-          # 补充OpenWrt编译必备依赖，避免后续环节缺库报错
-          sudo apt-get install -y build-essential clang flex g++ gawk gcc-multilib git libncurses-dev libssl-dev libelf-dev rsync unzip zlib1g-dev python3 python3-setuptools python3-pip bc quilt
+          sudo apt-get install -y \
+            build-essential clang flex g++ gawk gcc-multilib git \
+            libncurses5-dev libssl-dev libelf-dev rsync unzip zlib1g-dev \
+            python3 python3-distutils python3-setuptools python3-pip \
+            bc quilt
 
-      - name: 克隆LiBwrt openwrt-6.x源码
+      - name: 克隆 LiBwrt openwrt-6.x 源码
         run: |
-          # 浅克隆+单分支拉取，大幅加快源码下载速度
+          # ✅ 关键修复：强制删除旧目录，避免 clone 失败
+          rm -rf libwrt
           git clone --depth 1 --single-branch https://github.com/LiBwrt/openwrt-6.x.git libwrt
 
       - name: 复制自定义编译配置
         run: |
-          # 复制你仓库中存放的四个核心配置文件到OpenWrt源码目录
           cp diy-part1.sh libwrt/
           cp diy-part2.sh libwrt/
           cp feeds.conf.default libwrt/
-          # info.config作为编译配置文件，重命名为OpenWrt默认的.config
           cp info.config libwrt/.config
-          # 给DIY脚本添加执行权限，避免后续执行时报权限错误
           chmod +x libwrt/diy-part1.sh libwrt/diy-part2.sh
 
-      - name: 执行自定义DIY脚本
+      - name: 执行 DIY 自定义脚本
         working-directory: ./libwrt
         run: |
-          # diy-part1通常用于源码级修改（如添加第三方插件、打补丁等）
           ./diy-part1.sh
-          # diy-part2通常用于配置级修改（如调整.config开关、修改默认参数等）
           ./diy-part2.sh
 
-      - name: 更新并安装软件源(Feeds)
+      - name: 更新并安装 Feeds
         working-directory: ./libwrt
         run: |
           ./scripts/feeds update -a
           ./scripts/feeds install -a
 
-      - name: 下载编译所需源码包(dl目录)
+      - name: 下载 DL 库
         working-directory: ./libwrt
         run: make download -j$(nproc)
 
-      - name: 编译JDCloud RE-CS-02固件
+      - name: 编译 JDCloud RE-CS-02 固件
         working-directory: ./libwrt
         run: |
-          # GitHub Actions免费Runner仅7G内存，IPQ60xx平台编译内存占用极高
-          # 强制单线程编译避免内存溢出(OOM)导致编译中断，若后续测试内存充足可改为-j2
+          # ✅ 官方明确建议：为便于排查错误，推荐单线程
+          # IPQ60xx + NSS 编译非常吃内存，GitHub Runner 7G 内存必须用 -j1
           make -j1 V=s
 
       - name: 上传编译完成的固件
@@ -75,4 +73,3 @@ jobs:
         with:
           name: JDCloud_RE-CS-02_雅典娜固件
           path: libwrt/bin/targets/qualcommax/ipq60xx/
-          # 产物默认保留90天，可自行调整retention-days参数
