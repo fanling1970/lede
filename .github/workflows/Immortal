@@ -1,0 +1,104 @@
+name: ImmortalWrt 手动固件编译
+# 仅手动触发，无任何自动编译规则
+on:
+  workflow_dispatch:
+    inputs:
+      TARGET_PROFILE:
+        description: 编译机型名称（如 jdc_ax6600）
+        required: true
+        default: jdc_ax6600
+      COMPILE_THREAD:
+        description: 编译线程数（建议等于Runner核心数）
+        required: true
+        default: "4"
+      SAVE_LOG:
+        description: 是否保存完整编译日志
+        type: boolean
+        default: true
+
+jobs:
+  build_firmware:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: 1. 拉取当前仓库全部文件
+        uses: actions/checkout@main
+
+      - name: 2. 安装Ubuntu编译全套依赖
+        run: |
+          sudo apt update
+          sudo apt install -y build-essential libncurses-dev gawk flex bison qemu-utils git wget unzip libssl-dev python3 python3-pip time rsync curl
+          sudo apt autoremove -y
+          sudo apt clean
+
+      - name: 3. 全局配置Git ghproxy加速
+        run: git config --global url."https://mirror.ghproxy.com/https://github.com/".insteadOf https://github.com/
+
+      - name: 4. 克隆 ImmortalWrt 官方源码
+        run: |
+          git clone https://mirror.ghproxy.com/https://github.com/VIKINGYFY/immortalwrt.git openwrt
+          cd openwrt
+          # 同步源码最新提交
+          git pull
+
+      - name: 5. 覆盖自定义 feeds.conf.default（仓库内置带代理）
+        run: cp -v ./immortalwrt/feeds.conf.default ./openwrt/feeds.conf.default
+
+      - name: 6. 执行自定义前置脚本 diy-part1.sh
+        run: |
+          chmod +x ./immortalwrt/diy-part1.sh
+          ./immortalwrt/diy-part1.sh
+        working-directory: ./openwrt
+
+      - name: 7. 更新并安装全部软件源 feeds
+        run: |
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+        working-directory: ./openwrt
+
+      - name: 8. 导入自定义编译配置 .config
+        run: cp -v ./immortalwrt/info.config ./openwrt/.config
+
+      - name: 9. 执行自定义后置脚本 diy-part2.sh
+        run: |
+          chmod +x ../immortalwrt/diy-part2.sh
+          ../immortalwrt/diy-part2.sh
+        working-directory: ./openwrt
+
+      - name: 10. 预编译检查、生成完整配置
+        run: make defconfig
+        working-directory: ./openwrt
+
+      - name: 11. 下载源码预编译依赖
+        run: make download -j${{ github.event.inputs.COMPILE_THREAD }}
+        working-directory: ./openwrt
+
+      - name: 12. 开始编译固件
+        id: compile_start
+        run: make -j${{ github.event.inputs.COMPILE_THREAD }} 2>&1 | tee compile_log.txt
+        working-directory: ./openwrt
+
+      - name: 13. 打包完整编译日志
+        if: ${{ github.event.inputs.SAVE_LOG == true || failure() }}
+        run: tar -zcvf compile_log.tar.gz ./openwrt/compile_log.txt
+        working-directory: ./
+
+      - name: 14. 上传编译日志到产物
+        if: ${{ github.event.inputs.SAVE_LOG == true || failure() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: 编译完整日志
+          path: compile_log.tar.gz
+          retention-days: 7
+
+      - name: 15. 打包编译完成的固件文件
+        if: success()
+        run: tar -zcvf firmware_${{ github.event.inputs.TARGET_PROFILE }}.tar.gz ./openwrt/bin/targets/
+        working-directory: ./
+
+      - name: 16. 上传固件压缩包
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: 固件成品_${{ github.event.inputs.TARGET_PROFILE }}
+          path: firmware_${{ github.event.inputs.TARGET_PROFILE }}.tar.gz
+          retention-days: 15
