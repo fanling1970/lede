@@ -22,5 +22,5 @@
 # echo "src-git nekobox https://github.com/Thaolga/openwrt-nekobox.git;main" >> "feeds.conf.default"
 # echo "src-git mosdns https://github.com/sbwml/luci-app-mosdns.git;v5" >> "feeds.conf.default"
 # echo "src-git openclash https://github.com/vernesong/OpenClash.git;dev" >> "feeds.conf.default"
-echo 'src-git nas https://github.com/linkease/nas-packages.git;master' >> feeds.conf.default
-echo 'src-git nas_luci https://github.com/linkease/nas-packages-luci.git;main' >> feeds.conf.default
+# echo 'src-git nas https://github.com/linkease/nas-packages.git;master' >> feeds.conf.default
+# echo 'src-git nas_luci https://github.com/linkease/nas-packages-luci.git;main' >> feeds.conf.default
