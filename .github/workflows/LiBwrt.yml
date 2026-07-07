@@ -1,75 +1,100 @@
-name: LiBwrt编译 JDCloud 雅典娜(RE-CS-02) 固件
-
-# 仅手动触发，无任何自动触发
+name: libwrt 手动固件编译
+# 仅手动触发，无自动编译
 on:
   workflow_dispatch:
+    inputs:
+      TARGET_PROFILE:
+        description: 编译机型名称（如 jdc_ax6600）
+        required: true
+        default: jdc_ax6600
+      COMPILE_THREAD:
+        description: 编译线程数
+        required: true
+        default: "4"
+      SAVE_LOG:
+        description: 是否保存完整编译日志
+        type: boolean
+        default: true
 
 jobs:
-  build:
-    # ✅ 官方推荐 Ubuntu 20.04，最稳定
-    runs-on: ubuntu-20.04
-
+  build_firmware:
+    runs-on: ubuntu-22.04
     steps:
-      - name: 清理 Runner 冗余文件释放磁盘
-        run: |
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache
-          sudo apt-get clean
-          df -h
-
-      - name: 检出当前仓库配置
+      - name: 1. 拉取当前仓库全部文件
         uses: actions/checkout@v4
 
-      - name: 设置时区为上海
-        run: sudo timedatectl set-timezone 'Asia/Shanghai'
-
-      - name: 安装 OpenWrt 编译依赖（官方推荐清单）
+      - name: 2. 安装Ubuntu编译全套依赖
         run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            build-essential clang flex g++ gawk gcc-multilib git \
-            libncurses5-dev libssl-dev libelf-dev rsync unzip zlib1g-dev \
-            python3 python3-distutils python3-setuptools python3-pip \
-            bc quilt
+          sudo apt update
+          sudo apt install -y build-essential libncurses-dev gawk flex bison qemu-utils git wget unzip libssl-dev python3 python3-pip time rsync curl
+          sudo apt autoremove -y
+          sudo apt clean
 
-      - name: 克隆 LiBwrt openwrt-6.x 源码
+      - name: 3. 克隆 libwrt 源码（国外Runner直连GitHub，移除ghproxy避免DNS失败）
         run: |
-          # ✅ 关键修复：强制删除旧目录，避免 clone 失败
-          rm -rf libwrt
-          git clone --depth 1 --single-branch https://github.com/LiBwrt/openwrt-6.x.git libwrt
+          git clone --depth 1 --single-branch https://github.com/LiBwrt/openwrt-6.x.git openwrt
+          cd openwrt
+          git pull
 
-      - name: 复制自定义编译配置
+      - name: 4. 覆盖自定义 feeds.conf.default
+        run: cp -v ./libwrt/feeds.conf.default ./openwrt/feeds.conf.default
+
+      - name: 5. 执行前置自定义脚本 diy-part1.sh
         run: |
-          cp diy-part1.sh libwrt/
-          cp diy-part2.sh libwrt/
-          cp feeds.conf.default libwrt/
-          cp info.config libwrt/.config
-          chmod +x libwrt/diy-part1.sh libwrt/diy-part2.sh
+          chmod +x ../libwrt/diy-part1.sh
+          ../libwrt/diy-part1.sh
+        working-directory: ./openwrt
 
-      - name: 执行 DIY 自定义脚本
-        working-directory: ./libwrt
-        run: |
-          ./diy-part1.sh
-          ./diy-part2.sh
-
-      - name: 更新并安装 Feeds
-        working-directory: ./libwrt
+      - name: 6. 更新并安装全部软件源 feeds
         run: |
           ./scripts/feeds update -a
           ./scripts/feeds install -a
+        working-directory: ./openwrt
 
-      - name: 下载 DL 库
-        working-directory: ./libwrt
-        run: make download -j$(nproc)
+      - name: 7. 导入自定义编译配置 info.config
+        run: cp -v ./libwrt/info.config ./openwrt/.config
 
-      - name: 编译 JDCloud RE-CS-02 固件
-        working-directory: ./libwrt
+      - name: 8. 执行后置自定义脚本 diy-part2.sh
         run: |
-          # ✅ 官方明确建议：为便于排查错误，推荐单线程
-          # IPQ60xx + NSS 编译非常吃内存，GitHub Runner 7G 内存必须用 -j1
-          make -j1 V=s
+          chmod +x ../libwrt/diy-part2.sh
+          ../libwrt/diy-part2.sh
+        working-directory: ./openwrt
 
-      - name: 上传编译完成的固件
+      - name: 9. 预编译生成完整配置
+        run: make defconfig
+        working-directory: ./openwrt
+
+      - name: 10. 下载编译依赖源码包
+        run: make download -j${{ github.event.inputs.COMPILE_THREAD }}
+        working-directory: ./openwrt
+
+      - name: 11. 开始编译固件
+        id: compile_task
+        run: make -j${{ github.event.inputs.COMPILE_THREAD }} 2>&1 | tee compile_log.txt
+        working-directory: ./openwrt
+
+      - name: 12. 打包编译日志（成功/失败均保留）
+        if: ${{ github.event.inputs.SAVE_LOG == true || failure() }}
+        run: tar -zcvf compile_log.tar.gz ./openwrt/compile_log.txt
+
+      - name: 13. 上传编译日志产物
+        if: ${{ github.event.inputs.SAVE_LOG == true || failure() }}
         uses: actions/upload-artifact@v4
         with:
-          name: JDCloud_RE-CS-02_雅典娜固件
-          path: libwrt/bin/targets/qualcommax/ipq60xx/
+          name: 编译日志
+          path: compile_log.tar.gz
+          retention-days: 7
+
+      - name: 14. 打包固件成品
+        if: success()
+        run: |
+          cd openwrt/bin/targets/qualcommax/ipq60xx
+          tar -zcvf ../../../firmware_jdc_ax6600.tar.gz *.bin
+
+      - name: 15. 上传固件压缩包
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: 固件压缩包LiBwrt_JDC_AX6600
+          path: firmware_jdc_ax6600.tar.gz
+          retention-days: 15
