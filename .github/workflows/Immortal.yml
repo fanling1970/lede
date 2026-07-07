@@ -87,12 +87,14 @@ jobs:
 
       - name: 14. 打包固件成品
         if: success()
-        run: tar -zcvf firmware_${{ github.event.inputs.TARGET_PROFILE }}.tar.gz ./openwrt/bin/targets/
+        run: |
+          cd openwrt/bin/targets/qualcommax/ipq60xx
+          tar -zcvf ../../../firmware_jdc_ax6600.tar.gz *.bin
 
       - name: 15. 上传固件压缩包
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: 固件_${{ github.event.inputs.TARGET_PROFILE }}
-          path: firmware_${{ github.event.inputs.TARGET_PROFILE }}.tar.gz
+          name: 固件压缩包_JDC_AX6600
+          path: firmware_jdc_ax6600.tar.gz
           retention-days: 15
