@@ -89,7 +89,7 @@ jobs:
         if: success()
         run: |
           cd openwrt/bin/targets/qualcommax/ipq60xx
-          tar -zcvf ../../../firmware_jdc_ax6600.tar.gz *.bin
+          tar -zcvf ../../../../firmware_jdc_ax6600.tar.gz *.bin
 
       - name: 15. 上传固件压缩包
         if: success()
