@@ -321,12 +321,17 @@ echo "=========================================="
 # sed -i 's/services/network/g' feeds/luci/applications/luci-app-wol/root/usr/share/luci/menu.d/luci-app-wol.json
 # sed -i 's/services/network/g' feeds/luci/applications/luci-app-wifischedule/root/usr/share/luci/menu.d/luci-app-wifischedule.json
 
-# 取消 bootstrap 为默认主题，添加 argon 主题设置为默认
-rm -rf feeds/luci/themes/luci-theme-argon
+# 清理旧argon主题与配置插件目录
+rm -rf package/luci-theme-argon
+rm -rf package/luci-app-argon-config
+
+# 拉取argon主题+设置插件
 git clone --depth=1 https://github.com/jerrykuku/luci-theme-argon.git package/luci-theme-argon
 git clone --depth=1 https://github.com/jerrykuku/luci-app-argon-config.git package/luci-app-argon-config
 
+# 删除bootstrap默认主题自动配置脚本，避免冲突
 sed -i '/set luci.main.mediaurlbase=\/luci-static\/bootstrap/d' feeds/luci/themes/luci-theme-bootstrap/root/etc/uci-defaults/30_luci-theme-bootstrap
+# 修改luci核心集合，默认主题改为argon
 sed -i 's/luci-theme-bootstrap/luci-theme-argon/g' ./feeds/luci/collections/luci/Makefile
 
 # kucat theme
@@ -366,7 +371,6 @@ sed -i 's/luci-theme-bootstrap/luci-theme-argon/g' ./feeds/luci/collections/luci
 # 移除 openwrt feeds 过时的luci版本
 rm -rf feeds/luci/applications/luci-app-passwall
 # rm -rf feeds/luci/applications/luci-app-passwall2
-git clone --depth=1 https://github.com/kenzok8/small package/luci-app-passwall
 # git clone --depth=1 -b main https://github.com/xiaorouji/openwrt-passwall2.git package/luci-app-passwall2
 
 # 移除 openwrt feeds 自带的核心库
@@ -377,11 +381,6 @@ git clone --depth=1 https://github.com/kenzok8/small package/luci-app-passwall
 # OpenClash
 # 删除源码自带 luci-app-openclash，避免冲突
 rm -rf feeds/luci/applications/luci-app-openclash
-# 克隆kenzok8/small仓库（仅master分支，浅克隆减少耗时）
-git clone --depth=1 https://github.com/kenzok8/small package/luci-app-openclash
-
-# luci-app-ssr-plus
-git clone --depth=1 https://github.com/kenzok8/small package/luci-app-ssr-plus
 
 # nikki( Mihomo Kernel )
 # git clone --depth=1 -b main https://github.com/nikkinikki-org/OpenWrt-nikki.git package/luci-app-nikki
@@ -449,5 +448,7 @@ git clone --depth=1 https://github.com/kenzok8/small package/luci-app-ssr-plus
 # wget -O feeds/packages/lang/rust/Makefile https://raw.githubusercontent.com/aimetu/OpenWrt-Actions/refs/heads/main/patches/Makefile
 # sed -i 's/--set=llvm\.download-ci-llvm=true/--set=llvm.download-ci-llvm=false/' feeds/packages/lang/rust/Makefile
 
-./scripts/feeds update -a
-./scripts/feeds install -a
+# 添加京东云 AX6600 LED 控制插件
+rm -rf package/luci-app-athena-led
+git clone --depth=1 https://github.com/NONGFAH/luci-app-athena-led package/luci-app-athena-led
+chmod +x package/luci-app-athena-led/root/etc/init.d/athena_led package/luci-app-athena-led/root/usr/sbin/athena-led
