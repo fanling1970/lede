@@ -1,33 +1,22 @@
 #!/bin/bash
-#
-# https://github.com/P3TERX/Actions-OpenWrt
-# File name: diy-part1.sh
-# Description: OpenWrt DIY script part 1 (Before Update feeds)
-#
-# Copyright (c) 2019-2024 P3TERX <https://p3terx.com>
-#
-# This is free software, licensed under the MIT License.
-# See /LICENSE for more information.
-#
+# 清理旧重复软件源
+sed -i '/src-git kenzo/d' feeds.conf.default
+sed -i '/src-git small/d' feeds.conf.default
+sed -i '/src-git istore/d' feeds.conf.default
+sed -i '/src-git nas /d' feeds.conf.default
+sed -i '/src-git nas_luci/d' feeds.conf.default
 
-# Uncomment a feed source
-#sed -i 's/^#\(.*helloworld\)/\1/' feeds.conf.default
+# 添加kenzo、small源
+sed -i '$a src-git kenzo https://github.com/kenzok8/openwrt-packages' feeds.conf.default
+sed -i '$a src-git small https://github.com/kenzok8/small' feeds.conf.default
 
-# Add a feed source
-# echo 'src-git helloworld https://github.com/fw876/helloworld.git' >>feeds.conf.default
-# echo 'src-git passwall https://github.com/xiaorouji/openwrt-passwall.git' >>feeds.conf.default
-# echo 'src-git passwall2 https://github.com/xiaorouji/openwrt-passwall2.git' >>feeds.conf.default
-# echo "src-git nikki https://github.com/nikkinikki-org/OpenWrt-nikki.git;main" >> "feeds.conf.default"
-# echo "src-git neko https://github.com/nosignals/openwrt-neko.git;dev" >> "feeds.conf.default"
-# echo "src-git nekobox https://github.com/Thaolga/openwrt-nekobox.git;main" >> "feeds.conf.default"
-# echo "src-git mosdns https://github.com/sbwml/luci-app-mosdns.git;v5" >> "feeds.conf.default"
-# echo "src-git openclash https://github.com/vernesong/OpenClash.git;dev" >> "feeds.conf.default"
-# echo 'src-git nas https://github.com/linkease/nas-packages.git;master' >> feeds.conf.default
-# echo 'src-git nas_luci https://github.com/linkease/nas-packages-luci.git;main' >> feeds.conf.default
+# 空行 + istore 商店源
+sed -i '$a \\nsrc-git istore https://github.com/linkease/istore;main' feeds.conf.default
 
-echo 'src-git kenzo https://github.com/kenzok8/openwrt-packages' >> feeds.conf.default
-echo 'src-git small https://github.com/kenzok8/small' >> feeds.conf.default
+# 空行 + nas相关源
+sed -i '$a \\nsrc-git nas https://github.com/linkease/nas-packages.git;master' feeds.conf.default
+sed -i '$a src-git nas_luci https://github.com/linkease/nas-packages-luci.git;main' feeds.conf.default
 
-echo 'src-git istore https://github.com/linkease/istore;main' >> feeds.conf.default
-echo 'src-git nas https://github.com/linkease/nas-packages.git;master' >> feeds.conf.default
-echo 'src-git nas_luci https://github.com/linkease/nas-packages-luci.git;main' >> feeds.conf.default
+# 更新安装feeds
+./scripts/feeds update -a
+./scripts/feeds install -a
