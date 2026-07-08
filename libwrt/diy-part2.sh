@@ -291,7 +291,9 @@ sed -i 's/luci-theme-bootstrap/luci-theme-argon/g' ./feeds/luci/collections/luci
 
 # passwall(2) ( SingBox & Xray Kernel )
 # 移除 openwrt feeds 过时的luci版本
-# rm -rf feeds/luci/applications/luci-app-passwall
+rm -rf feeds/luci/applications/luci-app-passwall
+rm -rf package/luci-app-passwall
+git clone --depth=1 https://github.com/kenzok8/small-package package/luci-app-passwall
 # rm -rf feeds/luci/applications/luci-app-passwall2
 
 # 移除 openwrt feeds 自带的核心库
@@ -300,7 +302,9 @@ rm -rf feeds/packages/net/{xray-core,v2ray-geodata,sing-box,chinadns-ng,dns2sock
 
 # OpenClash
 # 删除源码自带 luci-app-openclash，避免冲突
-# rm -rf feeds/luci/applications/luci-app-openclash
+rm -rf feeds/luci/applications/luci-app-openclash
+rm -rf package/luci-app-openclash
+git clone --depth=1 https://github.com/kenzok8/small package/luci-app-openclash
 
 # 科学插件大全，移除 openwrt feeds 自带的核心包
 # rm -rf feeds/packages/net/{xray-core,v2ray-geodata,sing-box,chinadns-ng,dns2socks,hysteria,ipt2socks,microsocks,naiveproxy,shadowsocks-libev,shadowsocks-rust,shadowsocksr-libev,simple-obfs,tcping,trojan-plus,tuic-client,v2ray-plugin,xray-plugin,geoview,shadow-tls}
