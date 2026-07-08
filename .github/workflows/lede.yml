@@ -10,14 +10,23 @@
 # See /LICENSE for more information.
 #
 
-name: lede手动编译
+name: LEDE
 
+# 仅保留手动触发，取消自动编译
 on:
-  workflow_dispatch:  # 只保留手动触发
+  workflow_dispatch:
 
 env:
   REPO_URL: https://github.com/coolsnowwolf/lede
   REPO_BRANCH: master
+  # 适配仓库lede子目录存放配置文件
+  FEEDS_CONF: lede/feeds.conf.default
+  CONFIG_FILE: lede/.config
+  DIY_P1_SH: lede/diy-part1.sh
+  DIY_P2_SH: lede/diy-part2.sh
+  UPLOAD_BIN_DIR: false
+  UPLOAD_FIRMWARE: true
+  UPLOAD_RELEASE: true
   TZ: Asia/Shanghai
 
 jobs:
@@ -26,8 +35,6 @@ jobs:
     steps:
       - name: 检出代码
         uses: actions/checkout@v4
-        with:
-          path: source  # 检出到 source 目录
 
       - name: 初始化环境
         env:
@@ -43,7 +50,7 @@ jobs:
           sudo mkdir -p /workdir
           sudo chown $USER:$GROUPS /workdir
 
-      - name: 克隆上游源码
+      - name: 克隆源码并锁定指定提交de1795d
         working-directory: /workdir
         run: |
           df -hT $PWD
@@ -51,23 +58,12 @@ jobs:
           git -C openwrt checkout de1795d
           ln -sf /workdir/openwrt $GITHUB_WORKSPACE/openwrt
 
-      - name: 复制自定义配置文件
-        run: |
-          # 从 source/lede 目录复制配置文件到 openwrt 目录
-          cp source/lede/feeds.conf.default openwrt/feeds.conf.default
-          cp source/lede/ax6600-smart.config openwrt/.config
-          chmod +x source/lede/diy-part1.sh
-          chmod +x source/lede/diy-part2.sh
-          
-          # 如果有 files 目录也复制
-          if [ -d "source/lede/files" ]; then
-            cp -r source/lede/files openwrt/
-          fi
-
       - name: 加载自定义软件源
         run: |
+          [ -e $FEEDS_CONF ] && mv $FEEDS_CONF openwrt/feeds.conf.default
+          chmod +x $GITHUB_WORKSPACE/$DIY_P1_SH
           cd openwrt
-          $GITHUB_WORKSPACE/source/lede/diy-part1.sh
+          $GITHUB_WORKSPACE/$DIY_P1_SH
 
       - name: 更新软件源
         run: cd openwrt && ./scripts/feeds update -a
@@ -77,8 +73,11 @@ jobs:
 
       - name: 加载自定义配置
         run: |
+          [ -e files ] && mv files openwrt/files
+          [ -e $CONFIG_FILE ] && mv $CONFIG_FILE openwrt/.config
+          chmod +x $GITHUB_WORKSPACE/$DIY_P2_SH
           cd openwrt
-          $GITHUB_WORKSPACE/source/lede/diy-part2.sh
+          $GITHUB_WORKSPACE/$DIY_P2_SH
 
       - name: 下载依赖包
         id: package
@@ -108,7 +107,7 @@ jobs:
         uses: actions/upload-artifact@v4
         if: steps.compile.outputs.status == 'success' && env.UPLOAD_BIN_DIR == 'true'
         with:
-          name: OpenWrt_bin$${{ env.DEVICE_NAME }}$${{ env.FILE_DATE }}
+          name: OpenWrt_bin$$
           path: openwrt/bin
 
       - name: 整理文件
@@ -125,7 +124,7 @@ jobs:
         uses: actions/upload-artifact@v4
         if: steps.organize.outputs.status == 'success' && !cancelled()
         with:
-          name: OpenWrt_firmware$${{ env.DEVICE_NAME }}$${{ env.FILE_DATE }}
+          name: OpenWrt_firmware$$
           path: ${{ env.FIRMWARE_PATH }}
 
       - name: 生成发布标签
