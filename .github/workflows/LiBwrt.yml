@@ -1,10 +1,10 @@
 name: libwrt 手动固件编译
-# 仅手动触发，无自动编译
+# 仅手动触发，无自动编译规则
 on:
   workflow_dispatch:
     inputs:
       TARGET_PROFILE:
-        description: 编译机型名称（如 jdc_ax6600）
+        description: 编译机型名称（jdc_ax6600）
         required: true
         default: jdc_ax6600
       COMPILE_THREAD:
@@ -23,20 +23,20 @@ jobs:
       - name: 1. 拉取当前仓库全部文件
         uses: actions/checkout@v4
 
-      - name: 2. 安装Ubuntu编译全套依赖
+      - name: 2. 安装Ubuntu全套编译依赖
         run: |
           sudo apt update
           sudo apt install -y build-essential libncurses-dev gawk flex bison qemu-utils git wget unzip libssl-dev python3 python3-pip time rsync curl
           sudo apt autoremove -y
           sudo apt clean
 
-      - name: 3. 克隆 libwrt 源码（国外Runner直连GitHub，移除ghproxy避免DNS失败）
+      - name: 3. 克隆 libwrt 源码（直连GitHub，移除ghproxy避免DNS失败）
         run: |
           git clone --depth 1 --single-branch https://github.com/LiBwrt/openwrt-6.x.git openwrt
           cd openwrt
           git pull
 
-      - name: 4. 覆盖自定义 feeds.conf.default
+      - name: 4. 覆盖自定义 feeds.conf.default（内置第三方插件源）
         run: cp -v ./libwrt/feeds.conf.default ./openwrt/feeds.conf.default
 
       - name: 5. 执行前置自定义脚本 diy-part1.sh
@@ -81,20 +81,26 @@ jobs:
         if: ${{ github.event.inputs.SAVE_LOG == true || failure() }}
         uses: actions/upload-artifact@v4
         with:
-          name: 编译日志
+          name: 编译完整日志
           path: compile_log.tar.gz
           retention-days: 7
 
-      - name: 14. 打包固件成品
+      - name: 固件目录校验（查看是否生成bin）
         if: success()
-        run: |
-          cd openwrt/bin/targets/qualcommax/ipq60xx
-          tar -zcvf ../../../../firmware_jdc_ax6600.tar.gz *.bin
+        run: ls -l openwrt/bin/targets/qualcommax/ipq60xx/
 
-      - name: 15. 上传固件压缩包
+      - name: 14. 上传全新刷机factory固件
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: 固件压缩包LiBwrt_JDC_AX6600
-          path: firmware_jdc_ax6600.tar.gz
+          name: JDC_AX6600_全新刷机_factory
+          path: openwrt/bin/targets/qualcommax/ipq60xx/*factory.bin
+          retention-days: 15
+
+      - name: 15. 上传后台升级sysupgrade固件
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: JDC_AX6600_在线升级_sysupgrade
+          path: openwrt/bin/targets/qualcommax/ipq60xx/*sysupgrade.bin
           retention-days: 15
