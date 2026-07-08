@@ -93,7 +93,7 @@ jobs:
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: JDC_AX6600_全新刷机_factory
+          name: LiBwrt_JDC_AX6600_全新刷机_factory
           path: openwrt/bin/targets/qualcommax/ipq60xx/*factory.bin
           retention-days: 15
 
@@ -101,6 +101,6 @@ jobs:
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: JDC_AX6600_在线升级_sysupgrade
+          name: LiBwrt_JDC_AX6600_在线升级_sysupgrade
           path: openwrt/bin/targets/qualcommax/ipq60xx/*sysupgrade.bin
           retention-days: 15
