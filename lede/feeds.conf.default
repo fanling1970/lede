@@ -9,7 +9,7 @@ src-git telephony https://github.com/coolsnowwolf/telephony.git
 # src-git kenzo https://github.com/kenzok8/openwrt-packages.git
 # src-git small https://github.com/kenzok8/small.git
 # src-git smpackage https://github.com/kenzok8/small-package
-# src-git helloworld https://github.com/fw876/helloworld
+src-git helloworld https://github.com/fw876/helloworld
 
 # ✅ Argon 官方源（推荐，避免 kenzok8 版本滞后）
 src-git argon https://github.com/jerrykuku/luci-theme-argon
