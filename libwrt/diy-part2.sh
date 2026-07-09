@@ -276,41 +276,18 @@ echo "4. 使用说明: ✓ (文件: /root/README-SIMPLE-FIRMWARE.txt)"
 echo "=========================================="
 
 
-# 清理旧argon主题与配置插件目录
+# Argon主题设置默认
 rm -rf package/luci-theme-argon
 rm -rf package/luci-app-argon-config
-
-# 拉取argon主题+设置插件
 git clone --depth=1 https://github.com/jerrykuku/luci-theme-argon.git package/luci-theme-argon
 git clone --depth=1 https://github.com/jerrykuku/luci-app-argon-config.git package/luci-app-argon-config
-
-# 删除bootstrap默认主题自动配置脚本，避免冲突
 sed -i '/set luci.main.mediaurlbase=\/luci-static\/bootstrap/d' feeds/luci/themes/luci-theme-bootstrap/root/etc/uci-defaults/30_luci-theme-bootstrap
-# 修改luci核心集合，默认主题改为argon
 sed -i 's/luci-theme-bootstrap/luci-theme-argon/g' ./feeds/luci/collections/luci/Makefile
 
-# passwall(2) ( SingBox & Xray Kernel )
-# 移除 openwrt feeds 过时的luci版本
-# rm -rf feeds/luci/applications/luci-app-passwall
-# rm -rf package/luci-app-passwall
-# git clone --depth=1 https://github.com/kenzok8/small-package package/luci-app-passwall
-# rm -rf feeds/luci/applications/luci-app-passwall2
-
-# 移除 openwrt feeds 自带的核心库
-rm -rf feeds/packages/net/{xray-core,v2ray-core,v2ray-geodata,sing-box}
-rm -rf feeds/packages/net/{xray-core,v2ray-geodata,sing-box,chinadns-ng,dns2socks,hysteria,ipt2socks,microsocks,naiveproxy,shadowsocks-libev,shadowsocks-rust,shadowsocksr-libev,simple-obfs,tcping,trojan-plus,tuic-client,v2ray-plugin,xray-plugin,geoview,shadow-tls}
-
-# OpenClash
-# 删除源码自带 luci-app-openclash，避免冲突
-# rm -rf feeds/luci/applications/luci-app-openclash
-# rm -rf package/luci-app-openclash
-# git clone --depth=1 https://github.com/kenzok8/small package/luci-app-openclash
-
-# 科学插件大全，移除 openwrt feeds 自带的核心包
-# rm -rf feeds/packages/net/{xray-core,v2ray-geodata,sing-box,chinadns-ng,dns2socks,hysteria,ipt2socks,microsocks,naiveproxy,shadowsocks-libev,shadowsocks-rust,shadowsocksr-libev,simple-obfs,tcping,trojan-plus,tuic-client,v2ray-plugin,xray-plugin,geoview,shadow-tls}
-# git clone --depth=1 https://github.com/sbwml/openwrt_helloworld.git package/helloworld
-
-# 添加京东云 AX6600 LED 控制插件
+# 京东云AX6600 LED控制
 rm -rf package/luci-app-athena-led
 git clone --depth=1 https://github.com/NONGFAH/luci-app-athena-led package/luci-app-athena-led
 chmod +x package/luci-app-athena-led/root/etc/init.d/athena_led package/luci-app-athena-led/root/usr/sbin/athena-led
+
+# 删除官方老旧代理核心，防止版本冲突（必须保留）
+rm -rf feeds/packages/net/{xray-core,v2ray-geodata,sing-box,chinadns-ng,dns2socks,hysteria,ipt2socks,microsocks,naiveproxy,shadowsocks-libev,shadowsocks-rust,shadowsocksr-libev,simple-obfs,tcping,trojan-plus,tuic-client,v2ray-plugin,xray-plugin,geoview,shadow-tls}
