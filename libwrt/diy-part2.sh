@@ -274,20 +274,3 @@ echo "2. 三个WiFi: ✓ (密码:BUZHIDAOWA)"
 echo "3. 空密码登录: ✓ (首次登录后强制修改)"
 echo "4. 使用说明: ✓ (文件: /root/README-SIMPLE-FIRMWARE.txt)"
 echo "=========================================="
-
-
-# Argon主题设置默认
-rm -rf package/luci-theme-argon
-rm -rf package/luci-app-argon-config
-git clone --depth=1 https://github.com/jerrykuku/luci-theme-argon.git package/luci-theme-argon
-git clone --depth=1 https://github.com/jerrykuku/luci-app-argon-config.git package/luci-app-argon-config
-sed -i '/set luci.main.mediaurlbase=\/luci-static\/bootstrap/d' feeds/luci/themes/luci-theme-bootstrap/root/etc/uci-defaults/30_luci-theme-bootstrap
-sed -i 's/luci-theme-bootstrap/luci-theme-argon/g' ./feeds/luci/collections/luci/Makefile
-
-# 京东云AX6600 LED控制
-rm -rf package/luci-app-athena-led
-git clone --depth=1 https://github.com/NONGFAH/luci-app-athena-led package/luci-app-athena-led
-chmod +x package/luci-app-athena-led/root/etc/init.d/athena_led package/luci-app-athena-led/root/usr/sbin/athena-led
-
-# 删除官方老旧代理核心，防止版本冲突（必须保留）
-rm -rf feeds/packages/net/{xray-core,v2ray-geodata,sing-box,chinadns-ng,dns2socks,hysteria,ipt2socks,microsocks,naiveproxy,shadowsocks-libev,shadowsocks-rust,shadowsocksr-libev,simple-obfs,tcping,trojan-plus,tuic-client,v2ray-plugin,xray-plugin,geoview,shadow-tls}
