@@ -6,8 +6,8 @@ src-git routing https://github.com/coolsnowwolf/routing
 src-git telephony https://github.com/coolsnowwolf/telephony.git
 
 # 第三方插件源（只保留kenzo和small，它们已经包含了所有需要的插件）
-src-git kenzo https://github.com/kenzok8/openwrt-packages.git
-src-git small https://github.com/kenzok8/small.git
+# src-git kenzo https://github.com/kenzok8/openwrt-packages.git
+# src-git small https://github.com/kenzok8/small.git
 # src-git smpackage https://github.com/kenzok8/small-package
 # src-git helloworld https://github.com/fw876/helloworld
 
