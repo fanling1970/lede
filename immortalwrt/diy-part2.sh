@@ -21,7 +21,7 @@ uci set network.lan.netmask='255.255.255.0'
 uci commit network
 
 # 设置无线网络 - radio0 (5G)
-uci set wireless.radio0.channel='136'
+uci set wireless.radio0.channel='149'
 uci set wireless.radio0.band='5g'
 uci set wireless.radio0.htmode='HE80'
 uci set wireless.@wifi-iface[0].ssid='JDC_AX6600_5G'
@@ -37,9 +37,9 @@ uci set wireless.@wifi-iface[1].key='BUZHIDAOWA'
 uci set wireless.@wifi-iface[1].encryption='psk2'
 
 # 设置无线网络 - radio2 (5G2)
-uci set wireless.radio2.channel='36'
+uci set wireless.radio2.channel='44'
 uci set wireless.radio2.band='5g'
-uci set wireless.radio2.htmode='HE80'
+uci set wireless.radio2.htmode='HE160'
 uci set wireless.@wifi-iface[2].ssid='JDC_AX6600_5G2'
 uci set wireless.@wifi-iface[2].key='BUZHIDAOWA'
 uci set wireless.@wifi-iface[2].encryption='psk2'
