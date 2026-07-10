@@ -9,10 +9,13 @@ src-git telephony https://github.com/coolsnowwolf/telephony.git
 # src-git kenzo https://github.com/kenzok8/openwrt-packages.git
 # src-git small https://github.com/kenzok8/small.git
 # src-git smpackage https://github.com/kenzok8/small-package
-src-git helloworld https://github.com/fw876/helloworld
 
-# ✅ Argon 官方源（推荐，避免 kenzok8 版本滞后）
+# SSR Plus 依赖（你只开 SSR，这一个源够）
+src-git helloworld https://github.com/fw876/helloworld.git
+
+# Argon 主题 + 配置插件（jerrykuku 官方，不用 kenzok8 的滞后版）
 src-git argon https://github.com/jerrykuku/luci-theme-argon
+src-git argon_config https://github.com/jerrykuku/luci-app-argon-config
 
 # store商店和quickstart首页
 src-git istore https://github.com/linkease/istore;main
