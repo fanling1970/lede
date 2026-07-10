@@ -50,4 +50,10 @@ chmod +x package/luci-app-athena-led/root/etc/init.d/athena_led
 chmod +x package/luci-app-athena-led/root/usr/sbin/athena-led
 echo "✅ Athena LED 插件赋权完成"
 
+# 在 diy-part1.sh 的 argon/athena 处理之后加这段
+echo "--- 升级 Golang 到 1.26（适配新协议客户端） ---"
+rm -rf feeds/packages/lang/golang
+git clone --depth=1 https://github.com/sbwml/packages_lang_golang -b 26.x feeds/packages/lang/golang
+echo "✅ Golang 升级完成"
+
 echo "✅ [DIY-P1] 所有第三方包预处理完成"
