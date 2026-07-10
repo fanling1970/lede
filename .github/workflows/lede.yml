@@ -1,0 +1,112 @@
+name: lede 手动固件编译
+# 仅手动触发，无自动编译规则
+on:
+  workflow_dispatch:
+    inputs:
+      TARGET_PROFILE:
+        description: 编译机型名称（jdc_ax6600）
+        required: true
+        default: jdc_ax6600
+      COMPILE_THREAD:
+        description: 编译线程数
+        required: true
+        default: "4"
+      SAVE_LOG:
+        description: 是否保存完整编译日志
+        type: boolean
+        default: true
+
+jobs:
+  build_firmware:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: 1. 拉取当前仓库全部文件
+        uses: actions/checkout@v4
+
+      - name: 2. 安装Ubuntu全套编译依赖
+        run: |
+          sudo apt update
+          sudo apt install -y ack antlr3 asciidoc autoconf automake autopoint binutils bison build-essential \
+            bzip2 ccache clang cmake cpio curl device-tree-compiler flex gawk gcc-multilib g++-multilib gettext \
+            genisoimage git gperf haveged help2man intltool libc6-dev-i386 libelf-dev libfuse-dev libglib2.0-dev \
+            libgmp3-dev libltdl-dev libmpc-dev libmpfr-dev libncurses5-dev libncursesw5-dev libpython3-dev \
+            libreadline-dev libssl-dev libtool llvm lrzsz libnsl-dev ninja-build p7zip p7zip-full patch pkgconf \
+            python3 python3-pyelftools python3-setuptools qemu-utils rsync scons squashfs-tools subversion \
+            swig texinfo uglifyjs upx-ucl unzip vim wget xmlto xxd zlib1g-dev
+          sudo apt autoremove -y
+          sudo apt clean
+
+      - name: 3. 克隆 coolsnowwolf/lede 源码并锁定提交 de1795d
+        run: |
+          git clone https://github.com/coolsnowwolf/lede.git openwrt
+          cd openwrt
+          git checkout de1795d
+
+      - name: 4. 覆盖自定义 feeds.conf.default（内置第三方插件源）
+        run: cp -v ./lede/feeds.conf.default ./openwrt/feeds.conf.default
+
+      - name: 5. 执行前置自定义脚本 diy-part1.sh
+        run: |
+          chmod +x ../lede/diy-part1.sh
+          ../lede/diy-part1.sh
+        working-directory: ./openwrt
+
+      - name: 6. 更新并安装全部软件源 feeds
+        run: |
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+        working-directory: ./openwrt
+
+      - name: 7. 导入自定义编译配置 info.config
+        run: cp -v ./lede/info.config ./openwrt/.config
+
+      - name: 8. 执行后置自定义脚本 diy-part2.sh
+        run: |
+          chmod +x ../lede/diy-part2.sh
+          ../lede/diy-part2.sh
+        working-directory: ./openwrt
+
+      - name: 9. 预编译生成完整配置
+        run: make defconfig
+        working-directory: ./openwrt
+
+      - name: 10. 下载编译依赖源码包
+        run: make download -j${{ github.event.inputs.COMPILE_THREAD }}
+        working-directory: ./openwrt
+
+      - name: 11. 开始编译固件
+        id: compile_task
+        run: make -j${{ github.event.inputs.COMPILE_THREAD }} V=s 2>&1 | tee compile_log.txt
+        working-directory: ./openwrt
+
+      - name: 12. 打包编译日志（成功/失败均保留）
+        if: ${{ github.event.inputs.SAVE_LOG == 'true' || failure() }}
+        run: tar -zcvf compile_log.tar.gz ./openwrt/compile_log.txt
+
+      - name: 13. 上传编译日志产物
+        if: ${{ github.event.inputs.SAVE_LOG == 'true' || failure() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: 编译完整日志
+          path: compile_log.tar.gz
+          retention-days: 7
+
+      - name: 固件目录校验（查看是否生成bin）
+        if: success()
+        run: ls -l openwrt/bin/targets/qualcommax/ipq60xx/
+
+      - name: 14. 上传全新刷机factory固件
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lede_JDC_AX6600_全新刷机_factory
+          path: openwrt/bin/targets/qualcommax/ipq60xx/*factory.bin
+          retention-days: 15
+
+      - name: 15. 上传后台升级sysupgrade固件
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lede_JDC_AX6600_在线升级_sysupgrade
+          path: openwrt/bin/targets/qualcommax/ipq60xx/*sysupgrade.bin
+          retention-days: 15
