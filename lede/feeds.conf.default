@@ -14,8 +14,8 @@ src-git telephony https://github.com/coolsnowwolf/telephony.git
 src-git helloworld https://github.com/fw876/helloworld.git
 
 # Argon 主题 + 配置插件（jerrykuku 官方，不用 kenzok8 的滞后版）
-src-git argon https://github.com/jerrykuku/luci-theme-argon
-src-git argon_config https://github.com/jerrykuku/luci-app-argon-config
+# src-git argon https://github.com/jerrykuku/luci-theme-argon
+# src-git argon_config https://github.com/jerrykuku/luci-app-argon-config
 
 # store商店和quickstart首页
 src-git istore https://github.com/linkease/istore;main
