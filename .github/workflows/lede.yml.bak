@@ -51,13 +51,10 @@ jobs:
           sudo chown $USER:$GROUPS /workdir
 
       - name: 克隆源码并锁定指定提交de1795d
-        working-directory: /workdir
+        working-directory: ./
         run: |
-          df -hT $PWD
-          git clone $REPO_URL openwrt
-          git -C openwrt checkout de1795d
-          ln -sf /workdir/openwrt $GITHUB_WORKSPACE/openwrt
-
+          git clone --depth=1 $REPO_URL -b $REPO_BRANCH openwrt
+         
       - name: 加载自定义软件源
         run: |
           [ -e $FEEDS_CONF ] && mv $FEEDS_CONF openwrt/feeds.conf.default
