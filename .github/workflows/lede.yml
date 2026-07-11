@@ -76,7 +76,7 @@ jobs:
 
       - name: 11. 开始编译固件
         id: compile_task
-        run: make -j${{ github.event.inputs.COMPILE_THREAD }} V=s 2>&1 | tee compile_log.txt
+        run: make -j${{ github.event.inputs.COMPILE_THREAD }} 2>&1 | tee compile_log.txt
         working-directory: ./openwrt
 
       - name: 12. 打包编译日志（成功/失败均保留）
