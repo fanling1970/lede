@@ -21,7 +21,7 @@ env:
   REPO_BRANCH: master
   # 适配仓库lede子目录存放配置文件
   FEEDS_CONF: lede/feeds.conf.default
-  CONFIG_FILE: lede/.config
+  CONFIG_FILE: lede/info.config
   DIY_P1_SH: lede/diy-part1.sh
   DIY_P2_SH: lede/diy-part2.sh
   UPLOAD_BIN_DIR: false
