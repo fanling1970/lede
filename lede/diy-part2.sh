@@ -1,3 +1,6 @@
+#!/bin/bash
+# diy-part2.sh - 在 feeds install 之后执行
+
 # ========== 基础设置修改 ==========
 # 修改 device 设备名称
 sed -i "s/hostname='.*'/hostname='LEDE'/g" package/base-files/files/bin/config_generate
@@ -20,21 +23,6 @@ sed -i "s/LEDE/JDC_AX6600/g" package/kernel/mac80211/files/lib/wifi/mac80211.sh
 # 清除默认密码 password
 sed -i '/V4UetPzk$CYXluq4wUazHjmCDBCqXF/d' package/lean/default-settings/files/zzz-default-settings
 
-# ========== 删除冲突包（必须在 feeds install 之前）==========
-# 删除源码自带的 openclash，避免和 kenzok8/small 里的冲突
-rm -rf feeds/luci/applications/luci-app-openclash
-
-# 删除 argon 主题（用自定义版本替代）
-rm -rf feeds/luci/themes/luci-theme-argon
-
-# 防止 kenzok8/small 中的包与源码 feeds 中的同名包冲突
-rm -rf feeds/packages/net/{shadowsocks-libev,shadowsocksr-libev,xray-core,v2ray-core,sing-box}
-
-# 如果源码自带 istorex/quickstart/store，也先删除避免冲突
-rm -rf feeds/luci/applications/luci-app-istorex
-rm -rf feeds/luci/applications/luci-app-quickstart
-rm -rf feeds/luci/applications/luci-app-store
-
 # ========== 克隆第三方包 ==========
 # 自定义 argon 主题
 git clone --depth=1 https://github.com/jerrykuku/luci-theme-argon.git package/luci-theme-argon
@@ -53,6 +41,17 @@ cp -r /tmp/kenzok8-packages/luci-app-quickstart package/
 cp -r /tmp/kenzok8-packages/luci-app-store package/
 rm -rf /tmp/kenzok8-packages
 
-# ========== 更新并安装 feeds ==========
-./scripts/feeds update -a
-./scripts/feeds install -a
+# ========== 删除冲突包（在 feeds install 之后，但必须手动删除 feeds 安装的冲突包）==========
+# 删除 feeds 安装的冲突包（因为 feeds install 已经执行过了）
+rm -rf package/feeds/luci/luci-app-openclash 2>/dev/null || true
+rm -rf package/feeds/luci/luci-theme-argon 2>/dev/null || true
+rm -rf package/feeds/luci/luci-app-istorex 2>/dev/null || true
+rm -rf package/feeds/luci/luci-app-quickstart 2>/dev/null || true
+rm -rf package/feeds/luci/luci-app-store 2>/dev/null || true
+
+# 删除 feeds 安装的其他可能冲突包
+rm -rf package/feeds/packages/shadowsocks-libev 2>/dev/null || true
+rm -rf package/feeds/packages/shadowsocksr-libev 2>/dev/null || true
+rm -rf package/feeds/packages/xray-core 2>/dev/null || true
+rm -rf package/feeds/packages/v2ray-core 2>/dev/null || true
+rm -rf package/feeds/packages/sing-box 2>/dev/null || true
