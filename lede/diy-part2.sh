@@ -55,9 +55,8 @@ git clone --depth=1 https://github.com/kenzok8/small.git package/small
 
 # 删除 small 中有问题的包
 rm -rf package/small/tcping
-# 如果 dae/daed 也编译失败，可以取消注释下面两行
-# rm -rf package/small/dae
-# rm -rf package/small/daed
+rm -rf package/small/dae
+rm -rf package/small/daed
 
 # kenzok8/openwrt-packages（取需要的包和依赖）
 git clone --depth=1 https://github.com/kenzok8/openwrt-packages.git /tmp/kenzok8-packages
@@ -67,9 +66,11 @@ cp -r /tmp/kenzok8-packages/luci-app-istorex package/
 cp -r /tmp/kenzok8-packages/luci-app-quickstart package/
 cp -r /tmp/kenzok8-packages/luci-app-store package/
 
-# 复制缺失的依赖包
+# 复制缺失的依赖包（关键！）
 cp -r /tmp/kenzok8-packages/luci-lib-taskd package/
 cp -r /tmp/kenzok8-packages/quickstart package/
+cp -r /tmp/kenzok8-packages/luci-lib-xterm package/
+cp -r /tmp/kenzok8-packages/taskd package/
 
 # 检查是否有其他依赖
 if [ -d "/tmp/kenzok8-packages/luci-lib-docker" ]; then
