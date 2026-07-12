@@ -62,19 +62,19 @@ jobs:
           cd openwrt
           $GITHUB_WORKSPACE/$DIY_P1_SH
 
-      - name: 更新软件源
-        run: cd openwrt && ./scripts/feeds update -a
-
-      - name: 安装软件包
-        run: cd openwrt && ./scripts/feeds install -a
-
-      - name: 加载自定义配置
+      - name: 加载自定义配置和第三方包
         run: |
           [ -e files ] && mv files openwrt/files
           [ -e $CONFIG_FILE ] && mv $CONFIG_FILE openwrt/.config
           chmod +x $GITHUB_WORKSPACE/$DIY_P2_SH
           cd openwrt
           $GITHUB_WORKSPACE/$DIY_P2_SH
+
+      - name: 更新软件源
+        run: cd openwrt && ./scripts/feeds update -a
+
+      - name: 安装软件包
+        run: cd openwrt && ./scripts/feeds install -a
 
       - name: 下载依赖包
         id: package
