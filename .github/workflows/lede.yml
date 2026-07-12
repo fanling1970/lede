@@ -51,9 +51,13 @@ jobs:
           sudo chown $USER:$GROUPS /workdir
 
       - name: 克隆源码
-        working-directory: ./
+        working-directory: /workdir
         run: |
-          git clone --depth=1 $REPO_URL -b $REPO_BRANCH openwrt
+          df -hT $PWD
+          git clone $REPO_URL openwrt
+          git -C openwrt checkout de1795d
+          ln -sf /workdir/openwrt $GITHUB_WORKSPACE/openwrt
+        
          
       - name: 加载自定义软件源
         run: |
