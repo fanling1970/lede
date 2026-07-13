@@ -154,3 +154,11 @@ echo "   - 2.4G (radio1): JDC_AX6600_2.4G @ 6 HT40"
 echo "   - 5G2 (radio2): JDC_AX6600_5G2 @ 44 HE160"
 echo ""
 echo "🎯 下一步：运行 make menuconfig 选择需要的包"
+
+# 在 diy-part2.sh 末尾添加
+echo "=== 验证 feeds 安装状态 ==="
+ls -la package/ | grep -E "(argon|athena|helloworld)"
+echo "=== 验证 feeds 源 ==="
+cat feeds.conf.default | grep -E "(helloworld|istore|nas)"
+echo "=== 验证无线配置 ==="
+ls -la package/base-files/files/etc/uci-defaults/
