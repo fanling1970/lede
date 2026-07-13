@@ -1,59 +1,48 @@
 #!/bin/bash
-# 执行目录：openwrt 源码根目录
+# diy-part1.sh - 在 feeds update 之前执行
 set -e
 
-echo "=== [DIY-P1] 开始预处理第三方包 ==="
+echo "=== [DIY-P1] 开始配置 feeds 源 ==="
 
 # ======================================
-# 0. 先删 feeds/luci 里 Lean 自带的旧版 argon（关键！避免同名冲突）
-# feeds install 之后 luci 的索引在 feeds/luci.index，包在 feeds/luci/themes/
+# 1. 添加 feeds 源（必须在 feeds update 之前）
 # ======================================
-echo "--- 清理 Lean 自带旧版 argon（防止和 jerrykuku 新版撞名） ---"
+echo "--- 添加 feeds 源 ---"
+
+# 添加 helloworld（SSR 插件）
+echo 'src-git helloworld https://github.com/fw876/helloworld.git' >> feeds.conf.default
+
+# 添加 iStore 软件中心
+echo 'src-git istore https://github.com/linkease/istore;main' >> feeds.conf.default
+
+# 添加 NAS 插件
+echo 'src-git nas https://github.com/linkease/nas-packages.git;master' >> feeds.conf.default
+echo 'src-git nas_luci https://github.com/linkease/nas-packages-luci.git;main' >> feeds.conf.default
+
+echo "✅ feeds 源添加完成"
+
+# ======================================
+# 2. 清理 Lean 自带旧版 argon（避免冲突）
+# ======================================
+echo "--- 清理 Lean 自带旧版 argon ---"
 rm -rf feeds/luci/themes/luci-theme-argon 2>/dev/null || true
-# 顺手也清掉 feeds 索引里可能残留的引用，防止 install -a 又捡回来
+# 清理 feeds 索引中的引用
 sed -i '/^Package: luci-theme-argon$/,$ {/^$/d; /^Package:/a auto-selected 0' feeds/luci.index 2>/dev/null || true
 echo "✅ Lean 旧版 argon 已清除"
 
 # ======================================
-# 1. 清理 argon 残留（package/ 下如果之前拉过旧的也清掉）
+# 3. 升级 Golang 到 1.26（适配新协议）
 # ======================================
-echo "--- 清理 package/ 下 argon 旧残留 ---"
-rm -rf package/luci-theme-argon package/luci-app-argon-config
-echo "✅ package/ 残留清理完成"
-
-# ======================================
-# 2. 手动拉取 jerrykuku Argon 主题 + 配置插件
-# ======================================
-echo "--- 拉取 Argon 主题（jerrykuku 新版） ---"
-git clone --depth=1 https://github.com/jerrykuku/luci-theme-argon.git package/luci-theme-argon || {
-    echo "❌ Argon 主题拉取失败"
-    exit 1
-}
-
-echo "--- 拉取 Argon 配置插件 ---"
-git clone --depth=1 https://github.com/jerrykuku/luci-app-argon-config.git package/luci-app-argon-config || {
-    echo "❌ Argon 配置插件拉取失败"
-    exit 1
-}
-echo "✅ Argon 新版拉取完成"
-
-# ======================================
-# 3. 京东云 AX6600 LED 控制插件
-# ======================================
-echo "--- 拉取 Athena LED 控制插件 ---"
-git clone --depth=1 https://github.com/NONGFAH/luci-app-athena-led package/luci-app-athena-led || {
-    echo "❌ Athena LED 插件拉取失败"
-    exit 1
-}
-
-chmod +x package/luci-app-athena-led/root/etc/init.d/athena_led
-chmod +x package/luci-app-athena-led/root/usr/sbin/athena-led
-echo "✅ Athena LED 插件赋权完成"
-
-# 在 diy-part1.sh 的 argon/athena 处理之后加这段
-echo "--- 升级 Golang 到 1.26（适配新协议客户端） ---"
+echo "--- 升级 Golang 到 1.26 ---"
 rm -rf feeds/packages/lang/golang
 git clone --depth=1 https://github.com/sbwml/packages_lang_golang -b 26.x feeds/packages/lang/golang
 echo "✅ Golang 升级完成"
 
-echo "✅ [DIY-P1] 所有第三方包预处理完成"
+# ======================================
+# 4. 清理 package/ 目录残留（可选）
+# ======================================
+echo "--- 清理 package/ 目录残留 ---"
+rm -rf package/luci-theme-argon package/luci-app-argon-config package/luci-app-athena-led 2>/dev/null || true
+echo "✅ package/ 目录清理完成"
+
+echo "✅ [DIY-P1] feeds 配置完成"
