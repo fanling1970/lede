@@ -90,10 +90,10 @@ rm -rf package/small/tcping
 rm -rf package/small/dae
 rm -rf package/small/daed
 
-# kenzok8/openwrt-packages（取需要的包和依赖）
+# kenzok8/openwrt-packages（取需要的包和依赖，排除 dockerman）
 git clone --depth=1 https://github.com/kenzok8/openwrt-packages.git /tmp/kenzok8-packages
 
-# 复制主包
+# 复制主包（排除 dockerman）
 cp -r /tmp/kenzok8-packages/luci-app-istorex package/
 cp -r /tmp/kenzok8-packages/luci-app-quickstart package/
 cp -r /tmp/kenzok8-packages/luci-app-store package/
@@ -104,9 +104,30 @@ cp -r /tmp/kenzok8-packages/quickstart package/
 cp -r /tmp/kenzok8-packages/luci-lib-xterm package/
 cp -r /tmp/kenzok8-packages/taskd package/
 
-# 检查是否有其他依赖
+# 特别注意：不复制 dockerman 相关包！
+# 让 feeds install 使用 lede 自带的 dockerman
+echo "=== 注意：跳过 kenzok8 中的 dockerman 相关包，使用 lede 自带的版本 ==="
+
+# 检查是否有其他非 docker 依赖
 if [ -d "/tmp/kenzok8-packages/luci-lib-docker" ]; then
-    cp -r /tmp/kenzok8-packages/luci-lib-docker package/
+    echo "警告：发现 luci-lib-docker，但跳过复制（使用 lede 自带）"
 fi
 
 rm -rf /tmp/kenzok8-packages
+
+# ========== 验证 dockerman 状态 ==========
+echo "=== 验证 dockerman 相关文件状态 ==="
+echo "1. 检查 feeds 中的 dockerman:"
+find feeds/ -name "*dockerman*" -type d 2>/dev/null | head -3
+
+echo "2. 检查 feeds 中的 docker 相关包:"
+find feeds/ -name "*docker*" -type d 2>/dev/null | head -5
+
+echo "3. 检查 package/ 目录下的 docker 相关包:"
+find package/ -name "*docker*" -type d 2>/dev/null | head -5
+
+echo "4. 检查 small 仓库中的 docker 相关包:"
+find package/small -name "*docker*" -type d 2>/dev/null | head -3
+
+echo "=== 验证完成 ==="
+echo "说明：让 feeds install 使用 lede 自带的 dockerman，避免 kenzok8 版本覆盖"
