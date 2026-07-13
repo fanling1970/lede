@@ -1,147 +1,259 @@
+# https://github.com/P3TERX/Actions-OpenWrt
+#
+# File: .github/workflows/openwrt-builder.yml
+# Description: Build OpenWrt using GitHub Actions
+#
+# Copyright (c) 2019-2024 P3TERX <https://p3terx.com>
+#
+# This is free software, licensed under the MIT License.
+# See /LICENSE for more information.
+#
+
 name: immortalwrt
 
+# 仅保留手动触发，取消自动编译
 on:
   workflow_dispatch:
 
 env:
   REPO_URL: https://github.com/VIKINGYFY/immortalwrt.git
   REPO_BRANCH: main
+  # 适配仓库immortalwrt子目录存放配置文件
   FEEDS_CONF: immortalwrt/feeds.conf.default
   CONFIG_FILE: immortalwrt/info.config
   DIY_P1_SH: immortalwrt/diy-part1.sh
   DIY_P2_SH: immortalwrt/diy-part2.sh
   UPLOAD_BIN_DIR: false
   UPLOAD_FIRMWARE: true
-  UPLOAD_COWTRANSFER: false
-  UPLOAD_WETRANSFER: false
-  UPLOAD_RELEASE: false
+  UPLOAD_RELEASE: true
   TZ: Asia/Shanghai
 
 jobs:
   build:
     runs-on: ubuntu-22.04
-
     steps:
-    # ==========================================
-    # 1. 极限磁盘清理 (最激进模式)
-    # ==========================================
-    - name: 清理宿主机空间
-      uses: jlumbroso/free-disk-space@v1.3.1
-      with:
-        tool-cache: false # 保留 Python 和 Git 工具，否则后续命令会报错
-        android: true
-        dotnet: true
-        haskell: true
-        large-packages: true
-        docker-images: true
-        swap-storage: true
+      - name: 检出代码
+        uses: actions/checkout@v4
 
-    - name: 再次清理 apt 缓存
-      run: |
-        sudo apt-get clean
-        sudo rm -rf /var/lib/apt/lists/*
+      - name: 初始化环境
+        timeout-minutes: 15
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          # 1. 设置国内镜像源（加速下载）
+          echo "设置国内镜像源..."
+          sudo tee /etc/apt/sources.list << 'EOF'
+          deb http://mirrors.aliyun.com/ubuntu/ jammy main restricted universe multiverse
+          deb http://mirrors.aliyun.com/ubuntu/ jammy-security main restricted universe multiverse
+          deb http://mirrors.aliyun.com/ubuntu/ jammy-updates main restricted universe multiverse
+          deb http://mirrors.aliyun.com/ubuntu/ jammy-backports main restricted universe multiverse
+          EOF
+          
+          # 2. 清理缓存
+          echo "清理缓存..."
+          sudo rm -rf /var/lib/apt/lists/*
+          sudo apt-get clean
+          
+          # 3. 更新软件源
+          echo "更新软件源..."
+          sudo apt-get update -y
+          
+          # 4. 安装核心编译工具
+          echo "安装编译工具..."
+          sudo apt-get install -y \
+            build-essential \
+            ccache \
+            curl \
+            g++ \
+            gawk \
+            gettext \
+            git \
+            libncurses5-dev \
+            libssl-dev \
+            python3 \
+            python3-distutils \
+            python3-setuptools \
+            rsync \
+            unzip \
+            wget \
+            zlib1g-dev
+          
+          # 5. 安装 OpenWrt 编译额外工具
+          echo "安装 OpenWrt 额外工具..."
+          sudo apt-get install -y \
+            autoconf \
+            automake \
+            bison \
+            flex \
+            gcc-multilib \
+            g++-multilib \
+            libelf-dev \
+            libtool \
+            make \
+            pkg-config \
+            subversion \
+            texinfo
+          
+          # 6. 设置时区和目录
+          sudo timedatectl set-timezone "$TZ"
+          sudo mkdir -p /workdir
+          sudo chown $USER:$GROUPS /workdir
+          
+          echo "✅ 环境初始化完成"
 
-    # ==========================================
-    # 2. 增加磁盘监控 (诊断关键)
-    # ==========================================
-    - name: 检查初始磁盘空间
-      run: df -hT
+      - name: 克隆源码
+        working-directory: ./
+        run: |
+          git clone --depth=1 $REPO_URL -b $REPO_BRANCH openwrt
+          echo "✅ 源码克隆完成"      
+          
+      # ========== 第一步：执行 diy-part1.sh ==========
+      - name: 加载自定义软件源 (diy-part1)
+        run: |
+          echo "执行 diy-part1.sh..."
+          # 如果有预设的 feeds.conf.default，先复制过去
+          [ -e $FEEDS_CONF ] && cp $FEEDS_CONF openwrt/feeds.conf.default
+          # 执行 part1（添加 feeds 源、清理旧包、升级组件）
+          chmod +x $GITHUB_WORKSPACE/$DIY_P1_SH
+          cd openwrt
+          $GITHUB_WORKSPACE/$DIY_P1_SH
+          echo "✅ diy-part1.sh 执行完成"
 
-    # ==========================================
-    # 3. 初始化环境 (带日志限制)
-    # ==========================================
-    - name: 初始化编译环境
-      env:
-        DEBIAN_FRONTEND: noninteractive
-        # 尝试限制底层 .NET 日志输出，防止日志撑爆磁盘
-        DOTNET_SYSTEM_GLOBALIZATION_INVARIANT: 1
-      run: |
-        # 设置更大的超时时间，防止网络波动导致安装中断
-        sudo -E apt-get -qq update
-        sudo -E apt-get -qq install --no-install-recommends ack antlr3 asciidoc autoconf automake autopoint binutils bison build-essential \
-        bzip2 ccache cmake cpio curl device-tree-compiler fastjar flex gawk gettext gcc-multilib g++-multilib \
-        git gperf haveged help2man intltool libc6-dev-i386 libelf-dev libglib2.0-dev libgmp3-dev libltdl-dev \
-        libmpc-dev libmpfr-dev libncurses5-dev libncursesw5-dev libreadline-dev libssl-dev libtool lrzsz \
-        mkisofs msmtp nano ninja-build p7zip p7zip-full patch pkgconf python3 python3-pyelftools \
-        libpython3-dev qemu-utils rsync scons squashfs-tools subversion swig texinfo uglifyjs upx-ucl unzip \
-        vim wget xmlto xxd zlib1g-dev
-        
-        # 安装完成后再次检查空间
-        echo "安装完依赖后的空间:"
-        df -hT
+      # ========== 第二步：更新 feeds ==========
+      - name: 更新软件源
+        run: |
+          cd openwrt
+          echo "更新软件源..."
+          ./scripts/feeds update -a
+          echo "✅ 软件源更新完成"
 
-    # ==========================================
-    # 4. 源码克隆与配置
-    # ==========================================
-    - name: 克隆源码
-      run: |
-        git clone --depth=1 $REPO_URL -b $REPO_BRANCH openwrt
+      # ========== 第三步：安装 feeds ==========
+      - name: 安装软件包
+        run: |
+          cd openwrt
+          echo "安装软件包..."
+          ./scripts/feeds install -a
+          echo "✅ 软件包安装完成"
 
-    - name: 加载自定义 feeds
-      run: |
-        [ -e $FEEDS_CONF ] && mv $FEEDS_CONF openwrt/feeds.conf.default
-        chmod +x $DIY_P1_SH
-        cd openwrt
-        $GITHUB_WORKSPACE/$DIY_P1_SH
+      # ========== 第四步：执行 diy-part2.sh ==========
+      - name: 加载自定义配置和第三方包 (diy-part2)
+        run: |
+          echo "执行 diy-part2.sh..."
+          # 复制 files 目录（如果有）
+          [ -e files ] && cp -r files openwrt/files
+          # 执行 part2（克隆第三方包、配置修改、清理冲突）
+          chmod +x $GITHUB_WORKSPACE/$DIY_P2_SH
+          cd openwrt
+          $GITHUB_WORKSPACE/$DIY_P2_SH
+          echo "✅ diy-part2.sh 执行完成"
 
-    - name: 更新 feeds
-      run: cd openwrt && ./scripts/feeds update -a
+      # ========== 第五步：加载配置文件 ==========
+      - name: 加载配置文件
+        run: |
+          cd openwrt
+          echo "加载配置文件..."
+          # 如果有预设的 .config，复制过去
+          if [ -e $GITHUB_WORKSPACE/$CONFIG_FILE ]; then
+            cp $GITHUB_WORKSPACE/$CONFIG_FILE .config
+            echo "✅ 已加载自定义配置文件"
+          else
+            make defconfig
+            echo "✅ 已生成默认配置文件"
+          fi
 
-    - name: 安装 feeds
-      run: cd openwrt && ./scripts/feeds install -a
+      # ========== 第六步：下载依赖包 ==========
+      - name: 下载依赖包
+        id: package
+        run: |
+          cd openwrt
+          echo "检查配置文件..."
+          make defconfig
+          echo "开始下载依赖包..."
+          make download -j4
+          echo "清理下载失败的小文件..."
+          find dl -size -1024c -exec ls -l {} \;
+          find dl -size -1024c -exec rm -f {} \;
+          echo "✅ 依赖包下载完成"
 
-    - name: 加载自定义配置
-      run: |
-        [ -e files ] && mv files openwrt/files
-        [ -e $CONFIG_FILE ] && mv $CONFIG_FILE openwrt/.config
-        chmod +x $DIY_P2_SH
-        cd openwrt
-        $GITHUB_WORKSPACE/$DIY_P2_SH
+      # ========== 第七步：编译固件 ==========
+      - name: 编译固件
+        id: compile
+        run: |
+          cd openwrt
+          echo "开始编译固件..."
+          echo "使用 $(nproc) 线程编译"
+          make -j$(nproc) V=s
+          echo "status=success" >> $GITHUB_OUTPUT
+          # 提取设备名称
+          grep '^CONFIG_TARGET.*DEVICE.*=y' .config | sed -r 's/.*DEVICE_(.*)=y/\1/' > DEVICE_NAME
+          [ -s DEVICE_NAME ] && echo "DEVICE_NAME=_$(cat DEVICE_NAME)" >> $GITHUB_ENV
+          echo "FILE_DATE=_$(date +"%Y%m%d%H%M")" >> $GITHUB_ENV
+          echo "✅ 固件编译完成"
 
-    # ==========================================
-    # 5. 下载包与编译 (保守线程策略)
-    # ==========================================
-    - name: 下载包
-      id: package
-      run: |
-        cd openwrt
-        make defconfig
-        # 限制下载线程为 4，防止并发过高导致磁盘 IO 阻塞或临时文件过多
-        make download -j4
-        # 清理小于 1k 的无效文件
-        find dl -size -1024c -exec ls -l {} \;
-        find dl -size -1024c -exec rm -f {} \;
+      # ========== 后续步骤保持不变 ==========
+      - name: 检查空间使用
+        if: (!cancelled())
+        run: |
+          echo "检查磁盘空间使用..."
+          df -hT
 
-    - name: 编译固件
-      id: compile
-      run: |
-        cd openwrt
-        # 使用 CPU 核心数的一半进行编译，减少内存和磁盘压力
-        MAKE_JOBS=$(( $(nproc) / 2 ))
-        [ $MAKE_JOBS -lt 1 ] && MAKE_JOBS=1
-        echo "使用 $MAKE_JOBS 线程编译"
-        
-        # 首次尝试多线程，失败后回退单线程
-        make -j$MAKE_JOBS || make -j1 V=s
+      - name: 上传编译目录
+        uses: actions/upload-artifact@v4
+        if: steps.compile.outputs.status == 'success' && env.UPLOAD_BIN_DIR == 'true'
+        with:
+          name: OpenWrt_bin$$
+          path: openwrt/bin
 
-    # ==========================================
-    # 6. 结果处理
-    # ==========================================
-    - name: 检查最终空间
-      run: df -hT
+      - name: 整理文件
+        id: organize
+        if: env.UPLOAD_FIRMWARE == 'true' && !cancelled()
+        run: |
+          cd openwrt/bin/targets/*/*
+          echo "整理固件文件..."
+          rm -rf packages
+          FIRMWARE_PATH=$(pwd)
+          echo "FIRMWARE_PATH=$FIRMWARE_PATH" >> $GITHUB_ENV
+          echo "status=success" >> $GITHUB_OUTPUT
+          echo "✅ 文件整理完成"
 
-    - name: 整理文件
-      id: organize
-      if: env.UPLOAD_FIRMWARE == 'true' && !cancelled()
-      run: |
-        cd openwrt/bin/targets/*/*
-        rm -rf packages
-        echo "FIRMWARE=$PWD" >> $GITHUB_ENV
-        echo "status=success" >> $GITHUB_OUTPUT
+      - name: 上传固件目录
+        uses: actions/upload-artifact@v4
+        if: steps.organize.outputs.status == 'success' && !cancelled()
+        with:
+          name: OpenWrt_firmware$$
+          path: ${{ env.FIRMWARE_PATH }}
 
-    - name: 上传固件目录
-      uses: actions/upload-artifact@main
-      if: steps.organize.outputs.status == 'success' && !cancelled()
-      with:
-        name: immortalwrt_firmware
-        path: ${{ env.FIRMWARE }}
+      - name: 生成发布标签
+        id: tag
+        if: env.UPLOAD_RELEASE == 'true' && !cancelled()
+        run: |
+          echo "生成发布标签..."
+          echo "release_tag=$(date +"%Y.%m.%d-%H%M")" >> $GITHUB_OUTPUT
+          touch release.txt
+          echo "status=success" >> $GITHUB_OUTPUT
+          echo "✅ 发布标签生成完成"
+
+      - name: 上传固件到发布
+        uses: softprops/action-gh-release@master
+        if: steps.tag.outputs.status == 'success' && !cancelled()
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ steps.tag.outputs.release_tag }}
+          body_path: release.txt
+          files: ${{ env.FIRMWARE_PATH }}/*
+
+      - name: 删除旧的工作流运行
+        uses: Mattraks/delete-workflow-runs@main
+        with:
+          retain_days: 0
+          keep_minimum_runs: 2
+
+      - name: 移除旧的发布
+        uses: dev-drprasad/delete-older-releases@master
+        if: env.UPLOAD_RELEASE == 'true' && !cancelled()
+        with:
+          keep_latest: 3
+          delete_tags: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
