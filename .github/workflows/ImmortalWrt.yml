@@ -1,4 +1,4 @@
-# ImmortalWrt 编译工作流 | CCACHE加速版 | 修复libtool报错 & 下载失败重试 | 中文步骤名
+# ImmortalWrt 编译工作流 | CCACHE加速版 | 修复toolchain误删 & rust依赖 & libtool报错 | 中文步骤名
 # 基于 P3TERX Actions-OpenWrt 改造
 
 name: immortalwrt
@@ -65,7 +65,8 @@ jobs:
       - name: 清理编译残留缓存
         run: |
           cd openwrt
-          rm -rf build_dir staging_dir tmp toolchain .config *.oldconfig
+          # 仅删除编译生成的临时目录，严禁删除源码原生目录(toolchain/package/tools等)
+          rm -rf build_dir staging_dir tmp .config *.oldconfig
           ./scripts/feeds clean
 
       - name: 执行自定义脚本Part1
@@ -85,6 +86,16 @@ jobs:
           [ -e files ] && cp -r files openwrt/files
           chmod +x $GITHUB_WORKSPACE/$DIY_P2_SH
           cd openwrt && $GITHUB_WORKSPACE/$DIY_P2_SH
+
+      - name: 修复Rust宿主依赖缺失
+        run: |
+          cd openwrt
+          # 强制安装rust相关包，解决rust/host不存在警告
+          ./scripts/feeds install -a -f rust rust-host cargo
+          # 若源码自带rust包则刷新符号链接
+          if [ -d package/devel/rust ]; then
+            ln -sf ../../../package/devel/rust package/feeds/packages/rust 2>/dev/null || true
+          fi
 
       - name: 加载配置并启用CCACHE
         run: |
@@ -113,19 +124,18 @@ jobs:
           cd openwrt
           mkdir -p dl
           
-          # 第1次下载
+          # 第1次并发下载
           make download -j8 || true
-          # 清理不完整文件
           find dl -size -1024c -print -delete
           
-          # 第2次重试（单线程，避免并发导致的失败）
+          # 第2次单线程兜底重试
           make download -j1 || true
           find dl -size -1024c -print -delete
           
           # 第3次最终重试
           make download -j1 || true
           
-          # 最终校验：还有不完整文件则报错
+          # 最终校验
           BAD_FILES=$(find dl -size -1024c)
           if [ -n "$BAD_FILES" ]; then
             echo "❌ 以下源码包下载失败："
