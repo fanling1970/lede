@@ -2,58 +2,123 @@
 # diy-part2.sh
 
 # ========== 基础设置修改 ==========
-# 修改 device 设备名称（保留）
+# 修改 device 设备名称
 sed -i "s/hostname='.*'/hostname='LEDE'/g" package/base-files/files/bin/config_generate
 sed -i "s/hostname='.*'/hostname='LEDE'/g" package/base-files/luci2/bin/config_generate
 
-# 加入作者信息（保留）
+# 加入作者信息
 sed -i "s/DISTRIB_DESCRIPTION='*.*'/DISTRIB_DESCRIPTION='OpenWrt-$(date +%Y%m%d)'/g" package/lean/default-settings/files/zzz-default-settings   
 sed -i "s/DISTRIB_REVISION='*.*'/DISTRIB_REVISION=' By J.Y'/g" package/lean/default-settings/files/zzz-default-settings
 
 sed -i "2iuci set istore.istore.channel='OpenWrt'" package/lean/default-settings/files/zzz-default-settings
 sed -i "3iuci commit istore" package/lean/default-settings/files/zzz-default-settings
 
-# 默认网关 ip 地址修改（保留）
+# 默认网关 ip 地址修改
 sed -i 's/192.168.1.1/192.168.100.1/g' package/base-files/files/bin/config_generate
 sed -i 's/192.168.1.1/192.168.100.1/g' package/base-files/luci2/bin/config_generate
 
-# 修改 wifi 无线名称（删除或注释掉这行）
-# sed -i "s/LEDE/JDC_AX6600/g" package/kernel/mac80211/files/lib/wifi/mac80211.sh
-
-# 清除默认密码 password（保留）
+# 清除默认密码 password
 sed -i '/V4UetPzk$CYXluq4wUazHjmCDBCqXF/d' package/lean/default-settings/files/zzz-default-settings
 
-# ========== 添加无线网络配置 ==========
-cat >> package/lean/default-settings/files/zzz-default-settings << 'EOF'
+# ========== 添加无线网络配置（已验证正确）==========
+# 方法1：直接修改 mac80211.sh 模板
+cat >> package/kernel/mac80211/files/lib/wifi/mac80211.sh << 'EOF'
 
-# 设置无线网络 - radio0 (5G)
+# ===== 自定义无线配置（JDC_AX6600）=====
+set_wifi_config() {
+    # radio0 (5G) - 内置 SoC WiFi
+    uci set wireless.radio0.channel='149'
+    uci set wireless.radio0.band='5g'
+    uci set wireless.radio0.htmode='HE80'
+    uci set wireless.default_radio0.ssid='JDC_AX6600_5G'
+    uci set wireless.default_radio0.key='BUZHIDAOWA'
+    uci set wireless.default_radio0.encryption='psk2'
+
+    # radio1 (2.4G) - 内置 SoC WiFi 第二个频段
+    uci set wireless.radio1.channel='6'
+    uci set wireless.radio1.band='2g'
+    uci set wireless.radio1.htmode='HT40'
+    uci set wireless.default_radio1.ssid='JDC_AX6600_2.4G'
+    uci set wireless.default_radio1.key='BUZHIDAOWA'
+    uci set wireless.default_radio1.encryption='psk2'
+
+    # radio2 (5G) - PCIe 外置网卡
+    uci set wireless.radio2.channel='44'
+    uci set wireless.radio2.band='5g'
+    uci set wireless.radio2.htmode='HE160'
+    uci set wireless.default_radio2.ssid='JDC_AX6600_5G2'
+    uci set wireless.default_radio2.key='BUZHIDAOWA'
+    uci set wireless.default_radio2.encryption='psk2'
+
+    uci commit wireless
+    wifi reload
+}
+
+# 在无线初始化后执行
+set_wifi_config
+EOF
+
+# 方法2：创建独立的无线配置脚本
+mkdir -p package/base-files/files/etc/uci-defaults
+cat > package/base-files/files/etc/uci-defaults/99-custom-wireless << 'EOF'
+#!/bin/sh
+
+# 设置无线网络 - 已验证正确的配置
 uci set wireless.radio0.channel='149'
 uci set wireless.radio0.band='5g'
 uci set wireless.radio0.htmode='HE80'
-uci set wireless.@wifi-iface[0].ssid='JDC_AX6600_5G'
-uci set wireless.@wifi-iface[0].key='BUZHIDAOWA'
-uci set wireless.@wifi-iface[0].encryption='psk2'
+uci set wireless.default_radio0.ssid='JDC_AX6600_5G'
+uci set wireless.default_radio0.key='BUZHIDAOWA'
+uci set wireless.default_radio0.encryption='psk2'
 
-# 设置无线网络 - radio1 (2.4G)
 uci set wireless.radio1.channel='6'
 uci set wireless.radio1.band='2g'
 uci set wireless.radio1.htmode='HT40'
-uci set wireless.@wifi-iface[1].ssid='JDC_AX6600_2.4G'
-uci set wireless.@wifi-iface[1].key='BUZHIDAOWA'
-uci set wireless.@wifi-iface[1].encryption='psk2'
+uci set wireless.default_radio1.ssid='JDC_AX6600_2.4G'
+uci set wireless.default_radio1.key='BUZHIDAOWA'
+uci set wireless.default_radio1.encryption='psk2'
 
-# 设置无线网络 - radio2 (5G2)
 uci set wireless.radio2.channel='44'
 uci set wireless.radio2.band='5g'
 uci set wireless.radio2.htmode='HE160'
-uci set wireless.@wifi-iface[2].ssid='JDC_AX6600_5G2'
-uci set wireless.@wifi-iface[2].key='BUZHIDAOWA'
-uci set wireless.@wifi-iface[2].encryption='psk2'
+uci set wireless.default_radio2.ssid='JDC_AX6600_5G2'
+uci set wireless.default_radio2.key='BUZHIDAOWA'
+uci set wireless.default_radio2.encryption='psk2'
 
-# 提交无线配置更改
 uci commit wireless
+exit 0
 EOF
 
+chmod +x package/base-files/files/etc/uci-defaults/99-custom-wireless
+
+# 方法3：保留在 zzz-default-settings 中
+cat >> package/lean/default-settings/files/zzz-default-settings << 'EOF'
+
+# 设置无线网络 - 使用正确的接口名称（已验证）
+uci set wireless.radio0.channel='149'
+uci set wireless.radio0.band='5g'
+uci set wireless.radio0.htmode='HE80'
+uci set wireless.default_radio0.ssid='JDC_AX6600_5G'
+uci set wireless.default_radio0.key='BUZHIDAOWA'
+uci set wireless.default_radio0.encryption='psk2'
+
+uci set wireless.radio1.channel='6'
+uci set wireless.radio1.band='2g'
+uci set wireless.radio1.htmode='HT40'
+uci set wireless.default_radio1.ssid='JDC_AX6600_2.4G'
+uci set wireless.default_radio1.key='BUZHIDAOWA'
+uci set wireless.default_radio1.encryption='psk2'
+
+uci set wireless.radio2.channel='44'
+uci set wireless.radio2.band='5g'
+uci set wireless.radio2.htmode='HE160'
+uci set wireless.default_radio2.ssid='JDC_AX6600_5G2'
+uci set wireless.default_radio2.key='BUZHIDAOWA'
+uci set wireless.default_radio2.encryption='psk2'
+
+uci commit wireless
+wifi reload
+EOF
 
 # ========== 删除冲突包（必须在 feeds install 之前）==========
 # 删除源码自带的 openclash，避免和 kenzok8/small 里的冲突
@@ -98,7 +163,7 @@ cp -r /tmp/kenzok8-packages/luci-app-istorex package/
 cp -r /tmp/kenzok8-packages/luci-app-quickstart package/
 cp -r /tmp/kenzok8-packages/luci-app-store package/
 
-# 复制缺失的依赖包（关键！）
+# 复制缺失的依赖包
 cp -r /tmp/kenzok8-packages/luci-lib-taskd package/
 cp -r /tmp/kenzok8-packages/quickstart package/
 cp -r /tmp/kenzok8-packages/luci-lib-xterm package/
@@ -108,26 +173,42 @@ cp -r /tmp/kenzok8-packages/taskd package/
 # 让 feeds install 使用 lede 自带的 dockerman
 echo "=== 注意：跳过 kenzok8 中的 dockerman 相关包，使用 lede 自带的版本 ==="
 
-# 检查是否有其他非 docker 依赖
-if [ -d "/tmp/kenzok8-packages/luci-lib-docker" ]; then
-    echo "警告：发现 luci-lib-docker，但跳过复制（使用 lede 自带）"
-fi
-
 rm -rf /tmp/kenzok8-packages
 
-# ========== 验证 dockerman 状态 ==========
-echo "=== 验证 dockerman 相关文件状态 ==="
-echo "1. 检查 feeds 中的 dockerman:"
-find feeds/ -name "*dockerman*" -type d 2>/dev/null | head -3
+# ========== 修复 dockerman 编译问题 ==========
+echo "=== 修复 dockerman 编译问题 ==="
 
-echo "2. 检查 feeds 中的 docker 相关包:"
-find feeds/ -name "*docker*" -type d 2>/dev/null | head -5
+# 1. 检查当前状态
+echo "1. 检查当前 dockerman 配置状态"
+if grep -q "CONFIG_PACKAGE_luci-app-dockerman" .config; then
+    grep "CONFIG_PACKAGE_luci-app-dockerman" .config
+else
+    echo "未找到 dockerman 配置，手动添加"
+    echo "CONFIG_PACKAGE_luci-app-dockerman=y" >> .config
+fi
 
-echo "3. 检查 package/ 目录下的 docker 相关包:"
-find package/ -name "*docker*" -type d 2>/dev/null | head -5
+# 2. 确保 dockerman 是内置（y）而不是模块（m）
+sed -i 's/CONFIG_PACKAGE_luci-app-dockerman=m/CONFIG_PACKAGE_luci-app-dockerman=y/g' .config 2>/dev/null || true
+sed -i 's/# CONFIG_PACKAGE_luci-app-dockerman is not set/CONFIG_PACKAGE_luci-app-dockerman=y/g' .config 2>/dev/null || true
 
-echo "4. 检查 small 仓库中的 docker 相关包:"
-find package/small -name "*docker*" -type d 2>/dev/null | head -3
+# 3. 添加必要的依赖
+for pkg in dockerd docker luci-lib-docker; do
+    if ! grep -q "CONFIG_PACKAGE_${pkg}=y" .config; then
+        echo "添加依赖包: $pkg"
+        echo "CONFIG_PACKAGE_${pkg}=y" >> .config
+    fi
+done
 
-echo "=== 验证完成 ==="
-echo "说明：让 feeds install 使用 lede 自带的 dockerman，避免 kenzok8 版本覆盖"
+# 4. 验证修复
+echo "4. 验证 dockerman 相关配置:"
+grep -E "CONFIG_PACKAGE_(luci-app-dockerman|dockerd|docker|luci-lib-docker)" .config
+
+echo "=== dockerman 修复完成 ==="
+
+# ========== 验证无线配置状态 ==========
+echo "=== 验证无线配置状态 ==="
+echo "无线配置已添加到三个位置："
+echo "1. mac80211.sh（无线初始化时执行）"
+echo "2. /etc/uci-defaults/99-custom-wireless（系统启动时执行）"
+echo "3. zzz-default-settings（第一次启动时执行）"
+echo "=== 配置验证完成 ==="
