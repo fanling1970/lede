@@ -26,10 +26,10 @@ jobs:
   build:
     runs-on: ubuntu-22.04
     steps:
-      - name: Checkout
+      - name: 检出代码
         uses: actions/checkout@v4
 
-      - name: Init Env
+      - name: 初始化编译环境
         timeout-minutes: 15
         env:
           DEBIAN_FRONTEND: noninteractive
@@ -51,7 +51,7 @@ jobs:
           sudo timedatectl set-timezone "$TZ"
           sudo mkdir -p /workdir && sudo chown $USER:$GROUPS /workdir
 
-      - name: Restore CCACHE Cache
+      - name: 恢复CCACHE编译缓存
         uses: actions/cache@v4
         with:
           path: ${{ env.CCACHE_DIR }}
@@ -59,34 +59,34 @@ jobs:
           restore-keys: |
             ccache-${{ runner.os }}-${{ env.REPO_BRANCH }}-
 
-      - name: Clone Source
+      - name: 克隆源码
         run: git clone --depth=1 $REPO_URL -b $REPO_BRANCH openwrt
 
-      - name: Clean Build Cache
+      - name: 清理编译残留缓存
         run: |
           cd openwrt
           rm -rf build_dir staging_dir tmp toolchain .config *.oldconfig
           ./scripts/feeds clean
 
-      - name: Run DIY Part1
+      - name: 执行自定义脚本Part1
         run: |
           [ -e $FEEDS_CONF ] && cp $FEEDS_CONF openwrt/feeds.conf.default
           chmod +x $GITHUB_WORKSPACE/$DIY_P1_SH
           cd openwrt && $GITHUB_WORKSPACE/$DIY_P1_SH
 
-      - name: Update Feeds
+      - name: 更新软件源
         run: cd openwrt && ./scripts/feeds update -a -q
 
-      - name: Install Feeds
+      - name: 安装软件包
         run: cd openwrt && ./scripts/feeds install -a -q
 
-      - name: Run DIY Part2
+      - name: 执行自定义脚本Part2
         run: |
           [ -e files ] && cp -r files openwrt/files
           chmod +x $GITHUB_WORKSPACE/$DIY_P2_SH
           cd openwrt && $GITHUB_WORKSPACE/$DIY_P2_SH
 
-      - name: Load Config & Enable CCACHE
+      - name: 加载配置并启用CCACHE
         run: |
           cd openwrt
           if [ -e $GITHUB_WORKSPACE/$CONFIG_FILE ]; then
@@ -100,17 +100,17 @@ jobs:
           # 设置缓存最大容量
           ccache -M 10G -z
 
-      - name: Download Packages
+      - name: 下载依赖源码包
         run: |
           cd openwrt
           make defconfig -q
           make download -j8 -q
           find dl -size -1024c -exec rm -f {} \;
 
-      - name: Build Host Tools (Fix libtool Error)
+      - name: 编译宿主工具链（修复libtool报错）
         run: cd openwrt && make -j1 host/install V=0
 
-      - name: Build Firmware (Full Speed)
+      - name: 全速编译固件
         id: compile
         run: |
           cd openwrt
@@ -120,10 +120,10 @@ jobs:
           [ -s DEVICE_NAME ] && echo "DEVICE_NAME=_$(cat DEVICE_NAME)" >> $GITHUB_ENV
           echo "FILE_DATE=_$(date +"%Y%m%d%H%M")" >> $GITHUB_ENV
 
-      - name: Show CCACHE Stats
+      - name: 显示CCACHE缓存统计
         run: ccache -s
 
-      - name: Organize Firmware
+      - name: 整理固件文件
         id: organize
         if: env.UPLOAD_FIRMWARE == 'true' && !cancelled()
         run: |
@@ -132,14 +132,14 @@ jobs:
           echo "FIRMWARE_PATH=$(pwd)" >> $GITHUB_ENV
           echo "status=success" >> $GITHUB_OUTPUT
 
-      - name: Upload Firmware
+      - name: 上传固件产物
         uses: actions/upload-artifact@v4
         if: steps.organize.outputs.status == 'success' && !cancelled()
         with:
           name: OpenWrt_firmware$$
           path: ${{ env.FIRMWARE_PATH }}
 
-      - name: Generate Release Tag
+      - name: 生成发布标签
         id: tag
         if: env.UPLOAD_RELEASE == 'true' && !cancelled()
         run: |
@@ -147,7 +147,7 @@ jobs:
           touch release.txt
           echo "status=success" >> $GITHUB_OUTPUT
 
-      - name: Release Firmware
+      - name: 发布固件到Release
         uses: softprops/action-gh-release@master
         if: steps.tag.outputs.status == 'success' && !cancelled()
         env:
@@ -157,13 +157,13 @@ jobs:
           body_path: release.txt
           files: ${{ env.FIRMWARE_PATH }}/*
 
-      - name: Delete Old Runs
+      - name: 清理旧工作流记录
         uses: Mattraks/delete-workflow-runs@main
         with:
           retain_days: 0
           keep_minimum_runs: 2
 
-      - name: Delete Old Releases
+      - name: 清理旧发布版本
         uses: dev-drprasad/delete-older-releases@master
         if: env.UPLOAD_RELEASE == 'true' && !cancelled()
         with:
