@@ -1,4 +1,4 @@
-# ImmortalWrt 编译工作流 | CCACHE加速版 | 修复libtool/shadowsocks-rust报错 | 极简日志
+# ImmortalWrt 编译工作流 | CCACHE加速版 | 修复libtool报错 & 下载失败重试 | 中文步骤名
 # 基于 P3TERX Actions-OpenWrt 改造
 
 name: immortalwrt
@@ -100,12 +100,40 @@ jobs:
           # 设置缓存最大容量
           ccache -M 10G -z
 
-      - name: 下载依赖源码包
+      - name: 生成默认配置
         run: |
           cd openwrt
-          make defconfig -q
-          make download -j8 -q
-          find dl -size -1024c -exec rm -f {} \;
+          make defconfig || {
+            echo "❌ make defconfig 失败，请检查配置文件是否有冲突"
+            exit 1
+          }
+
+      - name: 下载依赖源码包（失败自动重试）
+        run: |
+          cd openwrt
+          mkdir -p dl
+          
+          # 第1次下载
+          make download -j8 || true
+          # 清理不完整文件
+          find dl -size -1024c -print -delete
+          
+          # 第2次重试（单线程，避免并发导致的失败）
+          make download -j1 || true
+          find dl -size -1024c -print -delete
+          
+          # 第3次最终重试
+          make download -j1 || true
+          
+          # 最终校验：还有不完整文件则报错
+          BAD_FILES=$(find dl -size -1024c)
+          if [ -n "$BAD_FILES" ]; then
+            echo "❌ 以下源码包下载失败："
+            echo "$BAD_FILES"
+            exit 1
+          fi
+          
+          echo "✅ 全部依赖包下载完成"
 
       - name: 编译宿主工具链（修复libtool报错）
         run: cd openwrt && make -j1 host/install V=0
