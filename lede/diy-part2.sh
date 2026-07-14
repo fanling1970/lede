@@ -57,7 +57,7 @@ echo "✅ 基础系统设置修改完成"
 echo "--- 清理冲突包 ---"
 
 # 删除源码自带的 openclash（避免和第三方冲突）
-rm -rf feeds/luci/applications/luci-app-openclash 2>/dev/null || true
+# rm -rf feeds/luci/applications/luci-app-openclash 2>/dev/null || true
 
 # 删除 feeds 中可能与新源冲突的 iStore 相关包
 rm -rf feeds/luci/applications/luci-app-istorex 2>/dev/null || true
