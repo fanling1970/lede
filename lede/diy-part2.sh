@@ -52,21 +52,21 @@ sed -i "3iuci commit istore" package/lean/default-settings/files/zzz-default-set
 echo "✅ 基础系统设置修改完成"
 
 # ======================================
-# 3. 清理冲突包
+# 3. 清理冲突包（修正：保留源码自带 OpenClash）
 # ======================================
 echo "--- 清理冲突包 ---"
 
-# 删除源码自带的 openclash（避免和第三方冲突）
+# 注意：注释掉删除源码自带 openclash 的行
 # rm -rf feeds/luci/applications/luci-app-openclash 2>/dev/null || true
 
-# 删除 feeds 中可能与新源冲突的 iStore 相关包
+# 只删除与新源冲突的 iStore 相关包
 rm -rf feeds/luci/applications/luci-app-istorex 2>/dev/null || true
 rm -rf feeds/luci/applications/luci-app-quickstart 2>/dev/null || true
 rm -rf feeds/luci/applications/luci-app-store 2>/dev/null || true
 rm -rf feeds/luci/libraries/luci-lib-taskd 2>/dev/null || true
 rm -rf feeds/luci/applications/quickstart 2>/dev/null || true
 
-echo "✅ 冲突包清理完成"
+echo "✅ 冲突包清理完成（保留源码 OpenClash）"
 
 # ======================================
 # 4. 更新并安装特定 feeds（确保安装）
@@ -129,36 +129,18 @@ echo "✅ 无线配置完成"
 # ======================================
 # 6. 验证配置
 # ======================================
-echo "=== 配置验证 ==="
-echo "✅ [DIY-P2] 所有配置完成"
-echo ""
-echo "📋 配置摘要："
-echo "1. feeds 源："
-echo "   - SSR: fw876/helloworld"
-echo "   - iStore: linkease/istore" 
-echo "   - NAS插件: linkease/nas-packages + nas-packages-luci"
-echo ""
-echo "2. 第三方包："
-echo "   - Argon主题: jerrykuku/luci-theme-argon"
-echo "   - Argon配置: jerrykuku/luci-app-argon-config"
-echo "   - LED控制: NONGFAH/luci-app-athena-led"
-echo ""
-echo "3. 系统设置："
-echo "   - 主机名: LEDE"
-echo "   - 网关IP: 192.168.100.1"
-echo "   - 版本: OpenWrt-$(date +%Y%m%d) By J.Y"
-echo ""
-echo "4. 无线网络："
-echo "   - 5G (radio0): JDC_AX6600_5G @ 149 HE80"
-echo "   - 2.4G (radio1): JDC_AX6600_2.4G @ 6 HT40"
-echo "   - 5G2 (radio2): JDC_AX6600_5G2 @ 44 HE160"
-echo ""
-echo "🎯 下一步：运行 make menuconfig 选择需要的包"
-
-# 在 diy-part2.sh 末尾添加
 echo "=== 验证 feeds 安装状态 ==="
 ls -la package/ | grep -E "(argon|athena|helloworld)"
 echo "=== 验证 feeds 源 ==="
 cat feeds.conf.default | grep -E "(helloworld|istore|nas)"
 echo "=== 验证无线配置 ==="
 ls -la package/base-files/files/etc/uci-defaults/
+
+echo "=== 检查 OpenClash ==="
+if [ -d "feeds/luci/applications/luci-app-openclash" ]; then
+    echo "✅ 源码自带 OpenClash 存在"
+else
+    echo "⚠️ 源码自带 OpenClash 不存在，将在下次编译时恢复"
+fi
+
+echo "✅ [DIY-P2] 所有配置完成"
