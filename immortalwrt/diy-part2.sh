@@ -121,3 +121,9 @@ chmod +x package/base-files/files/usr/bin/wifi-status
 echo "✅ 无线状态检查脚本已添加"
 
 echo "=== diy-part2.sh 执行完成（基于已验证的LEDE配置）==="
+# 彻底屏蔽shadowsocks-rust独立包，避免意外编译报错
+sed -i '/CONFIG_PACKAGE_shadowsocks-rust/d' .config
+echo "# CONFIG_PACKAGE_shadowsocks-rust is not set" >> .config
+# 可选：直接删除源码目录，100%不会被编译
+rm -rf feeds/packages/net/shadowsocks-rust
+
