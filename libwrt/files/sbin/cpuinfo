@@ -1,0 +1,12 @@
+#!/bin/sh
+# 适配IPQ60xx平台的CPU温度读取
+TEMP_PATH="/sys/class/thermal/thermal_zone0/temp"
+
+if [ -r "$TEMP_PATH" ]; then
+    raw_temp=$(cat "$TEMP_PATH")
+    # 毫摄氏度转换为摄氏度，保留1位小数
+    cpu_temp=$(awk "BEGIN {printf \"%.1f\", $raw_temp / 1000}")
+    echo "CPU ${cpu_temp}°C"
+else
+    echo "CPU 0.0°C"
+fi
