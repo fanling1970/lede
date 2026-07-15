@@ -57,7 +57,7 @@ echo "✅ 基础系统设置修改完成"
 echo "--- 清理冲突包 ---"
 
 # 注意：注释掉删除源码自带 openclash 的行
-rm -rf feeds/luci/applications/luci-app-openclash 2>/dev/null || true
+# rm -rf feeds/luci/applications/luci-app-openclash 2>/dev/null || true
 
 # 只删除与新源冲突的 iStore 相关包
 rm -rf feeds/luci/applications/luci-app-istorex 2>/dev/null || true
@@ -71,11 +71,6 @@ echo "✅ 冲突包清理完成（保留源码 OpenClash）"
 # ======================================
 # 4. 更新并安装特定 feeds（确保安装）
 # ======================================
-
-# 在 diy-part2.sh 的 feeds 安装部分添加
-./scripts/feeds update openclash
-./scripts/feeds install -a -p openclash
-
 echo "--- 更新 feeds ---"
 ./scripts/feeds update helloworld istore nas nas_luci
 
@@ -141,5 +136,11 @@ cat feeds.conf.default | grep -E "(helloworld|istore|nas)"
 echo "=== 验证无线配置 ==="
 ls -la package/base-files/files/etc/uci-defaults/
 
+echo "=== 检查 OpenClash ==="
+if [ -d "feeds/luci/applications/luci-app-openclash" ]; then
+    echo "✅ 源码自带 OpenClash 存在"
+else
+    echo "⚠️ 源码自带 OpenClash 不存在，将在下次编译时恢复"
+fi
 
 echo "✅ [DIY-P2] 所有配置完成"
