@@ -106,20 +106,24 @@ jobs:
       env:
         DEBIAN_FRONTEND: noninteractive
       run: |
+        # 先更新源
         sudo -E apt-get -qq update
         
+        # 分批安装，先安装核心编译工具
         echo "安装核心编译工具..."
         sudo -E apt-get -qq install build-essential gcc g++ make cmake git curl wget
         
+        # 再安装OpenWrt特定依赖
         echo "安装OpenWrt编译依赖..."
-        sudo -E apt-get -qq install ack antlr3 asciidoc autoconfig automake autopoint binutils bison \
+        sudo -E apt-get -qq install ack antlr3 asciidoc autoconf automake autopoint binutils bison \
         bzip2 ccache cpio device-tree-compiler fastjar flex gawk gettext gcc-multilib g++-multilib \
-        gperf haveged help2man intlibc6-dev-i386 libelf-dev libglib2.0-dev libgmp3-dev libltd-dev \
+        gperf haveged help2man intltool libc6-dev-i386 libelf-dev libglib2.0-dev libgmp3-dev libltdl-dev \
         libmpc-dev libmpfr-dev libncurses5-dev libncursesw5-dev libreadline-dev libssl-dev libtool lrzsz \
         mkisofs msmtp nano ninja-build p7zip p7zip-full patch pkgconf python2.7 python3 python3-pyelftools \
         libpython3-dev qemu-utils rsync scons squashfs-tools subversion swig texinfo uglifyjs upx-ucl unzip \
         vim xmlto xxd zlib1g-dev python3-setuptools
         
+        # 清理
         echo "清理不必要的包..."
         sudo -E apt-get -qq autoremove --purge
         sudo -E apt-get -qq clean
