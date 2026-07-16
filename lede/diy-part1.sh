@@ -10,7 +10,7 @@ echo "=== [DIY-P1] 开始配置 feeds 源 ==="
 echo "--- 添加 feeds 源 ---"
 
 # 在 diy-part1.sh 的 feeds 源部分添加
-echo 'src-git openclash https://github.com/vernesong/OpenClash.git' >> feeds.conf.default
+# echo 'src-git openclash https://github.com/vernesong/OpenClash.git' >> feeds.conf.default
 
 # 添加 helloworld（SSR 插件）
 echo 'src-git helloworld https://github.com/fw876/helloworld.git' >> feeds.conf.default
