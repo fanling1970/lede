@@ -201,8 +201,85 @@ EOF
 chmod +x files/etc/config/firewall
 echo "✅ 防火墙基础规则配置完成（已包含 Docker 网络支持）"
 
+# ====================================================================
+# 7. 创建 Docker 防火墙启动顺序修复脚本
+# 解决问题：firewall restart 会清掉 DOCKER 链，
+#          dockerd restart 可能破坏转发规则或启动失败。
+# 正确顺序：先 firewall restart → 再 dockerd start
+# ====================================================================
+echo "创建 Docker 防火墙启动修复脚本..."
+
+mkdir -p package/base-files/files/etc/uci-defaults
+cat > package/base-files/files/etc/uci-defaults/99-docker-firewall-fix << 'DOCKERFIREWALLEOF'
+#!/bin/sh
+# Docker 防火墙启动顺序修复脚本
+# 在首次启动时执行一次，确保 firewall 规则在 dockerd 之后正确加载
+
+# 检查是否已经执行过（避免重复执行）
+if [ -f /etc/.docker_firewall_fix_done ]; then
+    exit 0
+fi
+
+logger -t docker-firewall "[99-docker-firewall-fix] 开始修复 Docker 防火墙启动顺序..."
+
+# 等待系统基本服务就绪
+sleep 10
+
+# 如果 dockerd 服务存在且正在运行，按正确顺序重启
+if [ -x /etc/init.d/dockerd ]; then
+    logger -t docker-firewall "[99-docker-firewall-fix] 检测到 dockerd 服务，按顺序重启..."
+
+    # 步骤1：重启防火墙（应用 docker 区域 + 转发规则）
+    /etc/init.d/firewall restart >/dev/null 2>&1
+    sleep 2
+
+    # 步骤2：启动 Docker（重建 DOCKER/DOCKER-ISOLATION 等链）
+    /etc/init.d/dockerd start >/dev/null 2>&1
+    sleep 3
+
+    logger -t docker-firewall "[99-docker-firewall-fix] ✅ 防火墙和 Docker 服务已按正确顺序启动"
+else
+    logger -t docker-firewall "[99-docker-firewall-fix] ⚠️ dockerd 服务不存在，跳过"
+fi
+
+# 标记已完成，避免重复执行
+touch /etc/.docker_firewall_fix_done
+
+exit 0
+DOCKERFIREWALLEOF
+
+chmod +x package/base-files/files/etc/uci-defaults/99-docker-firewall-fix
+
+# 同时创建一个 hotplug 脚本，在网络接口 up 时也触发修复
+# （处理运行中重启网络/防火墙的场景）
+mkdir -p package/base-files/files/etc/hotplug.d/iface
+cat > package/base-files/files/etc/hotplug.d/iface/99-docker-firewall-fix << 'HOTPLUGEOF'
+#!/bin/sh
+# hotplug 接口事件触发：确保 Docker 网络在防火墙之后恢复
+# 仅在 lan 接口 up 且 dockerd 运行时执行
+
+[ "$ACTION" = "ifup" ] || exit 0
+[ "$INTERFACE" = "lan" ] || exit 0
+
+# 延迟等待网络稳定
+sleep 5
+
+# 检查 dockerd 是否在运行
+pgrep -f dockerd > /dev/null 2>&1 || exit 0
+
+logger -t docker-firewall "[hotplug] lan 接口 up，刷新防火墙和 Docker 网络..."
+/etc/init.d/firewall restart >/dev/null 2>&1
+sleep 2
+/etc/init.d/dockerd start >/dev/null 2>&1
+sleep 3
+logger -t docker-firewall "[hotplug] ✅ 刷新完成"
+HOTPLUGEOF
+
+chmod +x package/base-files/files/etc/hotplug.d/iface/99-docker-firewall-fix
+echo "✅ Docker 防火墙启动修复脚本创建完成"
+
 # ======================================
-# 7. 验证配置
+# 8. 验证配置
 # ======================================
 echo "=== 验证 feeds 安装状态 ==="
 ls -la package/ | grep -E "(argon|athena|helloworld)"
