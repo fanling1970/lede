@@ -126,8 +126,62 @@ WIFIEOF
 chmod +x package/base-files/files/etc/uci-defaults/99-custom-wireless
 echo "✅ 无线配置完成"
 
+# ====================================================================
+# 6. 创建防火墙基础配置
+# ====================================================================
+echo "配置防火墙基础规则..."
+
+mkdir -p files/etc/config
+cat > files/etc/config/firewall << 'EOF'
+config defaults
+  option syn_flood '1'
+  option input 'ACCEPT'
+  option output 'ACCEPT'
+  option forward 'REJECT'
+
+config zone
+  option name 'lan'
+  list network 'lan'
+  option input 'ACCEPT'
+  option output 'ACCEPT'
+  option forward 'ACCEPT'
+
+config zone
+  option name 'wan'
+  list network 'wan'
+  list network 'wan6'
+  option input 'REJECT'
+  option output 'ACCEPT'
+  option forward 'REJECT'
+  option masq '1'
+  option mtu_fix '1'
+
+config forwarding
+  option src 'lan'
+  option dest 'wan'
+
+config rule
+  option name 'Allow-DHCP-Renew'
+  option src 'wan'
+  option proto 'udp'
+  option dest_port '68'
+  option target 'ACCEPT'
+  option family 'ipv4'
+
+config rule
+  option name 'Allow-Ping'
+  option src 'wan'
+  option proto 'icmp'
+  option icmp_type 'echo-request'
+  option family 'ipv4'
+  option target 'ACCEPT'
+EOF
+
+chmod +x files/etc/config/firewall
+echo "✅ 防火墙基础规则配置完成"
+
 # ======================================
-# 6. 验证配置
+# 7. 验证配置
 # ======================================
 echo "=== 验证 feeds 安装状态 ==="
 ls -la package/ | grep -E "(argon|athena|helloworld)"
