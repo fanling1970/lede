@@ -117,7 +117,7 @@ uci set wireless.radio2.channel='44'
 uci set wireless.radio2.band='5g'
 uci set wireless.radio2.htmode='HE160'
 uci set wireless.default_radio2.ssid='JDC_AX6600_5G2'
-uci set wireless.default_radio2.key='BUZHIDAOWA'
+uci set wireless.default_radio0.key='BUZHIDAOWA'
 uci set wireless.default_radio2.encryption='psk2'
 
 uci commit wireless
@@ -278,8 +278,74 @@ HOTPLUGEOF
 chmod +x package/base-files/files/etc/hotplug.d/iface/99-docker-firewall-fix
 echo "✅ Docker 防火墙启动修复脚本创建完成"
 
+# ====================================================================
+# 8. 清理 luci-app-docker 自动创建的重复防火墙区域
+# 解决问题：luci-app-docker 插件在更改 Docker 路径时
+#          会自动创建一个额外的 docker 防火墙区域，
+#          与固件自带的 docker 区域叠加产生冲突。
+# 此脚本在首次启动时自动清理多余的 docker 区域。
+# ====================================================================
+echo "创建清理 luci-app-docker 重复防火墙区域脚本..."
+
+cat > package/base-files/files/etc/uci-defaults/98-cleanup-duplicate-docker-zone << 'CLEANUPEOF'
+#!/bin/sh
+# 清理 luci-app-docker 自动创建的重复 docker 防火墙区域
+# 固件已在 files/etc/config/firewall 中预配了完整的 docker 区域（含转发规则）
+# luci-app-docker 会额外创建一个无转发规则的空 docker 区域，需删除
+
+logger -t docker-firewall "[98-cleanup-docker-zone] 检查并清理重复的 docker 防火墙区域..."
+
+# 统计名为 docker 的防火墙区域数量
+DOCKER_ZONE_COUNT=$(uci show firewall | grep -c '\.name=.docker.' 2>/dev/null || echo "0")
+
+if [ "$DOCKER_ZONE_COUNT" -gt 1 ]; then
+    logger -t docker-firewall "[98-cleanup-docker-zone] 发现 ${DOCKER_ZONE_COUNT} 个 docker 区域，开始清理多余项..."
+
+    # 找出所有 docker 区域的索引，保留第一个（来自固件配置），删除其余的
+    FIRST=1
+    uci show firewall 2>/dev/null | grep '\.name=.docker$' | while read LINE; do
+        # 从类似 firewall.@zone[3].name='docker' 中提取索引
+        ZONE_IDX=$(echo "$LINE" | sed -n 's/.*@\[\([0-9]*\)\].*/\1/p')
+
+        if [ "$FIRST" = "1" ]; then
+            # 保留第一个 docker 区域（固件配置的那个）
+            logger -t docker-firewall "[98-cleanup-docker-zone] 保留 docker 区域 [索引=${ZONE_IDX}]"
+            FIRST=0
+        else
+            # 删除多余的 docker 区域（luci-app-docker 自动创建的）
+            logger -t docker-firewall "[98-cleanup-docker-zone] 删除重复 docker 区域 [索引=${ZONE_IDX}]"
+            uci delete "@zone[${ZONE_IDX}]" 2>/dev/null
+        fi
+    done
+
+    # 同时清理多余的 docker 转发规则（luci-app-docker 可能也会创建重复的 forwarding）
+    # 这里只清理目标为空的 forwarding 条目
+    uci show firewall 2>/dev/null | grep '\.forwarding' | while read LINE; do
+        FWD_IDX=$(echo "$LINE" | sed -n 's/.*@\[\([0-9]*\)\].*/\1/p')
+        SRC=$(uci get "@forwarding[${FWD_IDX}].src" 2>/dev/null)
+        DST=$(uci get "@forwarding[${FWD_IDX}].dest" 2>/dev/null)
+
+        # 如果是 docker 相关但 dest 为空，说明是不完整的规则，删除它
+        if [ "$SRC" = "docker" ] && [ -z "$DST" ]; then
+            logger -t docker-firewall "[98-cleanup-docker-zone] 删除不完整 docker 转发规则 [索引=${FWD_IDX}]"
+            uci delete "@forwarding[${FWD_IDX}]" 2>/dev/null
+        fi
+    done
+
+    uci commit firewall
+    logger -t docker-firewall "[98-cleanup-docker-zone] ✅ 清理完成，已删除重复的 docker 防火墙区域"
+else
+    logger -t docker-firewall "[98-cleanup-docker-zone] ✅ 只有 ${DOCKER_ZONE_COUNT} 个 docker 区域，无需清理"
+fi
+
+exit 0
+CLEANUPEOF
+
+chmod +x package/base-files/files/etc/uci-defaults/98-cleanup-duplicate-docker-zone
+echo "✅ 清理重复 docker 区域脚本创建完成"
+
 # ======================================
-# 8. 验证配置
+# 9. 验证配置
 # ======================================
 echo "=== 验证 feeds 安装状态 ==="
 ls -la package/ | grep -E "(argon|athena|helloworld)"
@@ -289,6 +355,9 @@ echo "=== 验证无线配置 ==="
 ls -la package/base-files/files/etc/uci-defaults/
 echo "=== 验证防火墙配置 ==="
 grep -A5 "docker" files/etc/config/firewall || echo "⚠️ Docker 防火墙配置未找到"
+echo "=== 验证 Docker 修复脚本 ==="
+ls -la package/base-files/files/etc/uci-defaults/*docker*
+ls -la package/base-files/files/etc/hotplug.d/iface/*docker*
 
 echo "=== 检查 OpenClash ==="
 if [ -d "feeds/luci/applications/luci-app-openclash" ]; then
