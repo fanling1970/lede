@@ -33,7 +33,7 @@ echo "✅ Athena LED 插件克隆完成"
 echo "--- 修改基础系统设置 ---"
 
 # 修改主机名
-sed -i "s/hostname='.*'/hostname='LEDE'/g" package/base-files/files/bin/config_generate
+sed -i "s/hostname='.*'/hostname='LibWrt'/g" package/base-files/files/bin/config_generate
 
 # 修改版本描述
 sed -i "s/DISTRIB_DESCRIPTION='*.*'/DISTRIB_DESCRIPTION='OpenWrt-$(date +%Y%m%d)'/g" package/lean/default-settings/files/zzz-default-settings   
