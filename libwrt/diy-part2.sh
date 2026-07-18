@@ -1,4 +1,3 @@
-
 #!/bin/bash
 # diy-part2.sh - 在 feeds install 之后执行
 echo "=== [DIY-P2] 开始配置第三方包和系统设置 ==="
@@ -34,7 +33,7 @@ echo "✅ Athena LED 插件克隆完成"
 echo "--- 修改基础系统设置 ---"
 
 # 修改主机名
-sed -i "s/hostname='.*'/hostname='LibWrt'/g" package/base-files/files/bin/config_generate
+sed -i "s/hostname='.*'/hostname='LEDE'/g" package/base-files/files/bin/config_generate
 
 # 修改版本描述
 sed -i "s/DISTRIB_DESCRIPTION='*.*'/DISTRIB_DESCRIPTION='OpenWrt-$(date +%Y%m%d)'/g" package/lean/default-settings/files/zzz-default-settings   
@@ -46,19 +45,18 @@ sed -i 's/192.168.1.1/192.168.100.1/g' package/base-files/files/bin/config_gener
 # 清除默认密码
 sed -i '/V4UetPzk$CYXluq4wUazHjmCDBCqXF/d' package/lean/default-settings/files/zzz-default-settings
 
-# 添加 iStore 频道信息
-sed -i "2iuci set istore.istore.channel='OpenWrt'" package/lean/default-settings/files/zzz-default-settings
-sed -i "3iuci commit istore" package/lean/default-settings/files/zzz-default-settings
+# 添加 iStore 频道信息（优化：防止上游更新导致行号错位）
+if ! grep -q "istore.channel" package/lean/default-settings/files/zzz-default-settings; then
+    sed -i "/^uci commit istore/i uci set istore.istore.channel='OpenWrt'" \
+        package/lean/default-settings/files/zzz-default-settings
+fi
 
 echo "✅ 基础系统设置修改完成"
 
 # ======================================
-# 3. 清理冲突包（修正：保留源码自带 OpenClash）
+# 3. 清理冲突包（保留源码自带 OpenClash）
 # ======================================
 echo "--- 清理冲突包 ---"
-
-# 注意：注释掉删除源码自带 openclash 的行
-# rm -rf feeds/luci/applications/luci-app-openclash 2>/dev/null || true
 
 # 只删除与新源冲突的 iStore 相关包
 rm -rf feeds/luci/applications/luci-app-istorex 2>/dev/null || true
@@ -127,168 +125,82 @@ WIFIEOF
 chmod +x package/base-files/files/etc/uci-defaults/99-custom-wireless
 echo "✅ 无线配置完成"
 
-# ====================================================================
-# 6. 创建防火墙基础配置（含 Docker 网络支持）
-# ====================================================================
-echo "配置防火墙基础规则..."
+# ======================================
+# 6. 防火墙配置与 Docker 兼容性修复
+# ======================================
+echo "--- 配置防火墙与 Docker 修复 ---"
 
-mkdir -p files/etc/config
-cat > files/etc/config/firewall << 'EOF'
-config defaults
-  option syn_flood '1'
-  option input 'ACCEPT'
-  option output 'ACCEPT'
-  option forward 'REJECT'
-
-config zone
-  option name 'lan'
-  list network 'lan'
-  option input 'ACCEPT'
-  option output 'ACCEPT'
-  option forward 'ACCEPT'
-
-config zone
-  option name 'wan'
-  list network 'wan'
-  list network 'wan6'
-  option input 'REJECT'
-  option output 'ACCEPT'
-  option forward 'REJECT'
-  option masq '1'
-  option mtu_fix '1'
-
-config forwarding
-  option src 'lan'
-  option dest 'wan'
-
-config rule
-  option name 'Allow-DHCP-Renew'
-  option src 'wan'
-  option proto 'udp'
-  option dest_port '68'
-  option target 'ACCEPT'
-  option family 'ipv4'
-
-config rule
-  option name 'Allow-Ping'
-  option src 'wan'
-  option proto 'icmp'
-  option icmp_type 'echo-request'
-  option family 'ipv4'
-  option target 'ACCEPT'
-
-# ==========================================
-# Docker 防火墙区域配置
-# 允许 Docker 容器访问外网及局域网互访
-# docker0 网桥由 Docker 服务动态创建
-# ==========================================
-config zone
-  option name 'docker'
-  option input 'ACCEPT'
-  option output 'ACCEPT'
-  option forward 'ACCEPT'
-  option network 'docker0'
-
-config forwarding
-  option src 'docker'
-  option dest 'wan'
-
-config forwarding
-  option src 'lan'
-  option dest 'docker'
-EOF
-
-chmod +x files/etc/config/firewall
-echo "✅ 防火墙基础规则配置完成（已包含 Docker 网络支持）"
-
-# ====================================================================
-# 7. 创建 Docker 防火墙启动顺序修复脚本
-# 解决问题：firewall restart 会清掉 DOCKER 链，
-#          dockerd restart 可能破坏转发规则或启动失败。
-# 正确顺序：先 firewall restart → 再 dockerd start
-# ====================================================================
-echo "创建 Docker 防火墙启动修复脚本..."
-
+# 【重要】不覆盖 files/etc/config/firewall，保留源码默认完整配置
+# 改为使用 uci-defaults 在首次启动时增量修改
 mkdir -p package/base-files/files/etc/uci-defaults
-cat > package/base-files/files/etc/uci-defaults/99-docker-firewall-fix << 'DOCKERFIREWALLEOF'
+
+cat > package/base-files/files/etc/uci-defaults/98-docker-firewall-fix << 'FWEOF'
 #!/bin/sh
-# Docker 防火墙启动顺序修复脚本
-# 在首次启动时执行一次，确保 firewall 规则在 dockerd 之后正确加载
+# === Docker 防火墙兼容性修复（首次启动执行） ===
 
-# 检查是否已经执行过（避免重复执行）
-if [ -f /etc/.docker_firewall_fix_done ]; then
-    exit 0
+# 1. 确保 docker -> wan 转发规则存在
+if [ -z "$(uci -q get firewall.@forwarding[-1].src | grep docker)" ]; then
+    uci add firewall forwarding
+    uci set firewall.@forwarding[-1].src='docker'
+    uci set firewall.@forwarding[-1].dest='wan'
+    uci commit firewall
 fi
 
-logger -t docker-firewall "[99-docker-firewall-fix] 开始修复 Docker 防火墙启动顺序..."
+# 2. 保护 Docker NAT 链不被 fw3 清除
+cat >> /etc/firewall.user << 'USEREOF'
 
-# 等待系统基本服务就绪
-sleep 10
-
-# 如果 dockerd 服务存在且正在运行，按正确顺序重启
-if [ -x /etc/init.d/dockerd ]; then
-    logger -t docker-firewall "[99-docker-firewall-fix] 检测到 dockerd 服务，按顺序重启..."
-
-    # 步骤1：重启防火墙（应用 docker 区域 + 转发规则）
-    /etc/init.d/firewall restart >/dev/null 2>&1
-    sleep 2
-
-    # 步骤2：启动 Docker（重建 DOCKER/DOCKER-ISOLATION 等链）
-    /etc/init.d/dockerd start >/dev/null 2>&1
-    sleep 3
-
-    logger -t docker-firewall "[99-docker-firewall-fix] ✅ 防火墙和 Docker 服务已按正确顺序启动"
-else
-    logger -t docker-firewall "[99-docker-firewall-fix] ⚠️ dockerd 服务不存在，跳过"
-fi
-
-# 标记已完成，避免重复执行
-touch /etc/.docker_firewall_fix_done
+# Docker NAT chain protection
+iptables -t nat -N DOCKER 2>/dev/null || true
+iptables -t nat -N DOCKER-ISOLATION-STAGE-1 2>/dev/null || true
+iptables -t nat -N DOCKER-ISOLATION-STAGE-2 2>/dev/null || true
+iptables -t filter -N DOCKER 2>/dev/null || true
+iptables -t filter -N DOCKER-ISOLATION-STAGE-1 2>/dev/null || true
+iptables -t filter -N DOCKER-ISOLATION-STAGE-2 2>/dev/null || true
+USEREOF
 
 exit 0
-DOCKERFIREWALLEOF
+FWEOF
+chmod +x package/base-files/files/etc/uci-defaults/98-docker-firewall-fix
 
-chmod +x package/base-files/files/etc/uci-defaults/99-docker-firewall-fix
-
-# 同时创建一个 hotplug 脚本，在网络接口 up 时也触发修复
-# （处理运行中重启网络/防火墙的场景）
-mkdir -p package/base-files/files/etc/hotplug.d/iface
-cat > package/base-files/files/etc/hotplug.d/iface/99-docker-firewall-fix << 'HOTPLUGEOF'
+# 3. 注入 rc.local Docker FORWARD 补全脚本
+mkdir -p files/etc
+cat > files/etc/rc.local << 'RCEOF'
 #!/bin/sh
-# hotplug 接口事件触发：确保 Docker 网络在防火墙之后恢复
-# 仅在 lan 接口 up 且 dockerd 运行时执行
 
-[ "$ACTION" = "ifup" ] || exit 0
-[ "$INTERFACE" = "lan" ] || exit 0
+# Docker FORWARD 规则补全（配合 firewall reload 使用）
+(
+    for i in $(seq 1 30); do
+        if ip link show docker0 &>/dev/null; then
+            sleep 3
+            /etc/init.d/firewall reload
+            if ! iptables -C FORWARD -i docker0 -o !docker0 -j ACCEPT 2>/dev/null; then
+                iptables -I FORWARD -i docker0 -o !docker0 -j ACCEPT
+            fi
+            if ! iptables -C FORWARD -o docker0 -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT 2>/dev/null; then
+                iptables -I FORWARD -o docker0 -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
+            fi
+            logger -t docker-fix "Firewall reloaded & FORWARD rules patched"
+            break
+        fi
+        sleep 1
+    done
+) &
 
-# 延迟等待网络稳定
-sleep 5
+exit 0
+RCEOF
+chmod +x files/etc/rc.local
 
-# 检查 dockerd 是否在运行
-pgrep -f dockerd > /dev/null 2>&1 || exit 0
-
-logger -t docker-firewall "[hotplug] lan 接口 up，刷新防火墙和 Docker 网络..."
-/etc/init.d/firewall restart >/dev/null 2>&1
-sleep 2
-/etc/init.d/dockerd start >/dev/null 2>&1
-sleep 3
-logger -t docker-firewall "[hotplug] ✅ 刷新完成"
-HOTPLUGEOF
-
-chmod +x package/base-files/files/etc/hotplug.d/iface/99-docker-firewall-fix
-echo "✅ Docker 防火墙启动修复脚本创建完成"
+echo "✅ 防火墙与 Docker 修复配置完成"
 
 # ======================================
-# 8. 验证配置
+# 7. 验证配置
 # ======================================
 echo "=== 验证 feeds 安装状态 ==="
 ls -la package/ | grep -E "(argon|athena|helloworld)"
 echo "=== 验证 feeds 源 ==="
 cat feeds.conf.default | grep -E "(helloworld|istore|nas)"
-echo "=== 验证无线配置 ==="
+echo "=== 验证无线与Docker修复配置 ==="
 ls -la package/base-files/files/etc/uci-defaults/
-echo "=== 验证防火墙配置 ==="
-grep -A5 "docker" files/etc/config/firewall || echo "⚠️ Docker 防火墙配置未找到"
 
 echo "=== 检查 OpenClash ==="
 if [ -d "feeds/luci/applications/luci-app-openclash" ]; then
