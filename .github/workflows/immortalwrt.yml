@@ -10,7 +10,7 @@
 # updated version ref: https://github.com/dxdf/ActionsBuildOpenWRT
 # 新增：Rust环境彻底清理，修复shadowsocks-rust编译报错
 # 修正：全文件YAML缩进规范，消除解析错误
-# 终极修改：替换官方简陋Dockerman为Lisaac第三方完整版Dockerman（市面通用版）
+# 修复：第三方Dockerman适配APK包格式，移除版本号v前缀解决打包失败
 #
 
 name: immortalwrt
@@ -151,17 +151,24 @@ jobs:
           rm -rf dl/cargo build_dir/target-aarch64_cortex-a53_musl/shadowsocks-rust*
           echo "Rust环境清理完成，已规避shadowsocks-rust编译错误"
 
-      # 【关键修改】替换官方Dockerman为第三方完整版Lisaac Dockerman
-      - name: 替换为第三方完整版 Dockerman
+      # 【关键修复】替换官方Dockerman + 适配APK版本号格式
+      - name: 替换为第三方完整版 Dockerman (APK适配版)
         run: |
           cd openwrt
-          # 1. 彻底删除源码自带简陋版dockerman，杜绝冲突
+          # 1. 彻底清理feeds内所有同名包，杜绝双版本冲突
           rm -rf feeds/luci/applications/luci-app-dockerman
+          rm -rf feeds/luci/collections/luci-lib-docker
+          rm -rf feeds/packages/utils/luci-lib-docker
           rm -rf package/luci-app-dockerman package/luci-lib-docker
-          # 2. 克隆 Lisaac 原版完整版 Dockerman 及依赖（全网成品固件同款）
+
+          # 2. 克隆 Lisaac 原版完整版
           git clone https://github.com/lisaac/luci-lib-docker.git package/luci-lib-docker
           git clone https://github.com/lisaac/luci-app-dockerman.git package/luci-app-dockerman
-          echo "第三方完整版 Dockerman 替换完成，无版本冲突"
+
+          # 3. 关键修复：移除版本号v前缀，适配APK包格式校验
+          sed -i 's/PKG_VERSION:=v/PKG_VERSION:=/g' package/luci-lib-docker/Makefile
+          sed -i 's/PKG_VERSION:=v/PKG_VERSION:=/g' package/luci-app-dockerman/Makefile
+          echo "第三方 Dockerman 替换完成，已修复APK版本号兼容问题"
 
       - name: 更新软件源
         run: cd openwrt && ./scripts/feeds update -a
