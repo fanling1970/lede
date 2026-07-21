@@ -10,7 +10,8 @@
 # updated version ref: https://github.com/dxdf/ActionsBuildOpenWRT
 # 新增：Rust环境彻底清理，修复shadowsocks-rust编译报错
 # 修正：全文件YAML缩进规范，消除解析错误
-# 修复：第三方Dockerman适配APK包格式，移除版本号v前缀解决打包失败
+# 修复1：第三方Dockerman适配APK包格式，移除版本号v前缀
+# 修复2：修正lisaac仓库目录结构，提取Makefile到包根目录
 #
 
 name: immortalwrt
@@ -151,24 +152,32 @@ jobs:
           rm -rf dl/cargo build_dir/target-aarch64_cortex-a53_musl/shadowsocks-rust*
           echo "Rust环境清理完成，已规避shadowsocks-rust编译错误"
 
-      # 【关键修复】替换官方Dockerman + 适配APK版本号格式
-      - name: 替换为第三方完整版 Dockerman (APK适配版)
+      # 【关键修复】替换官方Dockerman + 修正目录结构 + APK版本号适配
+      - name: 替换为第三方完整版 Dockerman (修复目录结构+APK适配)
         run: |
           cd openwrt
-          # 1. 彻底清理feeds内所有同名包，杜绝双版本冲突
+          # 1. 彻底清理所有同名包，杜绝双版本冲突
           rm -rf feeds/luci/applications/luci-app-dockerman
           rm -rf feeds/luci/collections/luci-lib-docker
           rm -rf feeds/packages/utils/luci-lib-docker
           rm -rf package/luci-app-dockerman package/luci-lib-docker
 
-          # 2. 克隆 Lisaac 原版完整版
-          git clone https://github.com/lisaac/luci-lib-docker.git package/luci-lib-docker
-          git clone https://github.com/lisaac/luci-app-dockerman.git package/luci-app-dockerman
+          # 2. 克隆到临时目录
+          git clone --depth=1 https://github.com/lisaac/luci-lib-docker.git tmp-lib-docker
+          git clone --depth=1 https://github.com/lisaac/luci-app-dockerman.git tmp-app-dockerman
 
-          # 3. 关键修复：移除版本号v前缀，适配APK包格式校验
+          # 3. 提取实际包目录到 package 根层级（Makefile 移到顶层，编译系统才能识别）
+          mv tmp-lib-docker/collections/luci-lib-docker package/luci-lib-docker
+          mv tmp-app-dockerman/applications/luci-app-dockerman package/luci-app-dockerman
+
+          # 4. 清理临时目录
+          rm -rf tmp-lib-docker tmp-app-dockerman
+
+          # 5. 移除版本号v前缀，适配APK包格式强制校验
           sed -i 's/PKG_VERSION:=v/PKG_VERSION:=/g' package/luci-lib-docker/Makefile
           sed -i 's/PKG_VERSION:=v/PKG_VERSION:=/g' package/luci-app-dockerman/Makefile
-          echo "第三方 Dockerman 替换完成，已修复APK版本号兼容问题"
+          
+          echo "第三方 Dockerman 替换完成，目录结构与APK格式已适配"
 
       - name: 更新软件源
         run: cd openwrt && ./scripts/feeds update -a
