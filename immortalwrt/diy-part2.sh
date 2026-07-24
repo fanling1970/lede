@@ -17,150 +17,106 @@ sed -i "s/hostname='.*'/hostname='immortalwrt'/g" package/base-files/files/bin/c
 sed -i 's/192.168.1.1/192.168.100.1/g' package/base-files/files/bin/config_generate
 
 # ======================================
-# Docker 防火墙兼容性终极修复方案（fw4适配+编译期预置）
+# Docker 防火墙兼容性终极修复方案（fw4/nftables 原生适配）
 # ======================================
-echo "--- 集成 Docker 防火墙终极修复（fw4/nftables 适配版） ---"
+echo "--- 集成 Docker 防火墙终极修复（fw4 nftables 原生版） ---"
 
-# 【核心】自动探测并 patch 所有可能的 dockerd init 脚本
-echo ">>> Auto-detecting and patching dockerd init scripts..."
-DOCKERD_PATCHED=0
-for script in \
-    package/base-files/files/etc/init.d/dockerd \
-    feeds/packages/utils/dockerd/files/dockerd.init \
-    feeds/luci/applications/luci-app-dockerman/root/etc/init.d/dockerd \
-    package/luci-app-dockerman/root/etc/init.d/dockerd \
-    package/utils/dockerd/files/dockerd.init \
-    $(find . -path "*/init.d/dockerd" -o -path "*/dockerd.init" 2>/dev/null); do
-    if [ -f "$script" ] && ! grep -q "#DISABLED#" "$script"; then
-        # 注释掉所有 uci firewall zone 相关操作
-        sed -i '/uci[[:space:]]\{1,\}add[[:space:]]\{1,\}firewall[[:space:]]\{1,\}zone/s/^/#DISABLED# /' "$script"
-        sed -i '/uci[[:space:]]\{1,\}set[[:space:]]\{1,\}firewall\.@zone/s/^/#DISABLED# /' "$script"
-        sed -i '/uci[[:space:]]\{1,\}commit[[:space:]]\{1,\}firewall/s/^/#DISABLED# /' "$script"
-        echo "✅ Patched: $script"
-        DOCKERD_PATCHED=$((DOCKERD_PATCHED + 1))
-    fi
-done
-if [ "$DOCKERD_PATCHED" -eq 0 ]; then
-    echo "⚠️ WARNING: No dockerd init script found to patch! Listing candidates..."
-    find . -name "dockerd*" -type f 2>/dev/null | head -20
-fi
-
-# 【关键】编译期直接预置正确的 docker zone 到 UCI 默认配置
-# 这样刷机后 zone 就存在，无需等待运行时创建
-echo ">>> Pre-seeding docker firewall zone into base-files UCI defaults..."
-mkdir -p package/base-files/files/etc/uci-defaults
-cat > package/base-files/files/etc/uci-defaults/97-docker-zone-preseed << 'PRESEEDEOF'
-#!/bin/sh
-# === 编译期预置 Docker Zone（仅首次启动执行）===
-# 检查是否已有 docker zone，没有则创建（兼容 fw3/fw4）
-HAS_ZONE=""
-for idx in $(seq 0 30); do
-    zname=$(uci -q get firewall.@zone[$idx].name 2>/dev/null)
-    [ "$zname" = "docker" ] && HAS_ZONE="$idx" && break
-done
-
-if [ -z "$HAS_ZONE" ]; then
-    uci add firewall zone
-    uci set firewall.@zone[-1].name='docker'
-    uci set firewall.@zone[-1].network='docker'
-    uci set firewall.@zone[-1].input='ACCEPT'
-    uci set firewall.@zone[-1].output='ACCEPT'
-    uci set firewall.@zone[-1].forward='ACCEPT'
-    uci set firewall.@zone[-1].masq='1'
-    uci set firewall.@zone[-1].mtu_fix='1'
-    uci set firewall.@zone[-1].conntrack='1'
-    logger -t docker-fix "Pre-seeded firewall zone_docker"
-else
-    # 确保参数完整
-    uci set firewall.@zone[$HAS_ZONE].input='ACCEPT'
-    uci set firewall.@zone[$HAS_ZONE].output='ACCEPT'
-    uci set firewall.@zone[$HAS_ZONE].forward='ACCEPT'
-    uci set firewall.@zone[$HAS_ZONE].masq='1'
-    uci set firewall.@zone[$HAS_ZONE].mtu_fix='1'
-    uci set firewall.@zone[$HAS_ZONE].conntrack='1'
-    logger -t docker-fix "Patched existing zone_docker at index $HAS_ZONE"
-fi
-
-# 确保 forwarding
-HAS_FWD=""
-for idx in $(seq 0 30); do
-    src=$(uci -q get firewall.@forwarding[$idx].src 2>/dev/null)
-    dest=$(uci -q get firewall.@forwarding[$idx].dest 2>/dev/null)
-    [ "$src" = "docker" ] && [ "$dest" = "wan" ] && HAS_FWD="1" && break
-done
-if [ -z "$HAS_FWD" ]; then
-    uci add firewall forwarding
-    uci set firewall.@forwarding[-1].src='docker'
-    uci set firewall.@forwarding[-1].dest='wan'
-    logger -t docker-fix "Added docker->wan forwarding rule"
-fi
-
-uci commit firewall
-/etc/init.d/firewall reload 2>/dev/null
-logger -t docker-fix "Docker zone preseed completed"
-exit 0
-PRESEEDEOF
-chmod +x package/base-files/files/etc/uci-defaults/97-docker-zone-preseed
-
-# rc.local 兜底（每次启动确保 FORWARD 规则 + Zone 完整性）
+# 【核心】不再尝试 patch dockerd init（构建系统会覆盖），
+# 改为在 rc.local 中直接注入 nftables 规则 + 强制 dockerd 重载防火墙绑定
 mkdir -p files/etc
 cat > files/etc/rc.local << 'RCEOF'
 #!/bin/sh
 
 (
-    for i in $(seq 1 45); do
-        if ip link show docker0 &>/dev/null; then
-            sleep 5
-            
-            # 兜底：如果 zone 丢失则重建
-            HAS_ZONE=""
-            for idx in $(seq 0 30); do
-                zname=$(uci -q get firewall.@zone[$idx].name 2>/dev/null)
-                [ "$zname" = "docker" ] && HAS_ZONE="$idx" && break
-            done
-            if [ -z "$HAS_ZONE" ]; then
-                uci add firewall zone
-                uci set firewall.@zone[-1].name='docker'
-                uci set firewall.@zone[-1].network='docker'
-                uci set firewall.@zone[-1].input='ACCEPT'
-                uci set firewall.@zone[-1].output='ACCEPT'
-                uci set firewall.@zone[-1].forward='ACCEPT'
-                uci set firewall.@zone[-1].masq='1'
-                uci set firewall.@zone[-1].mtu_fix='1'
-                uci set firewall.@zone[-1].conntrack='1'
-                uci commit firewall
-                logger -t docker-fix "rc.local: Recreated missing zone_docker"
-            fi
-            
-            /etc/init.d/firewall reload 2>/dev/null
-            
-            # fw3 iptables 兜底
-            if command -v iptables &>/dev/null; then
-                iptables -C FORWARD -i docker0 -o !docker0 -j ACCEPT 2>/dev/null || \
-                    iptables -I FORWARD -i docker0 -o !docker0 -j ACCEPT
-                iptables -C FORWARD -o docker0 -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT 2>/dev/null || \
-                    iptables -I FORWARD -o docker0 -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
-            fi
-            
-            # fw4 nftables 兜底
-            if command -v nft &>/dev/null; then
-                nft list chain inet fw4 forward | grep -q "docker0" || {
-                    nft insert rule inet fw4 forward iifname "docker0" accept 2>/dev/null
-                    nft insert rule inet fw4 forward oifname "docker0" ct state established,related accept 2>/dev/null
-                }
-            fi
-            
-            logger -t docker-fix "rc.local: Firewall reloaded & FORWARD rules patched"
-            break
-        fi
+    # 等待 docker0 就绪
+    for i in $(seq 1 60); do
+        ip link show docker0 &>/dev/null && break
         sleep 1
     done
+
+    # 等待 dockerd 完成初始 nftables 链创建
+    sleep 8
+
+    # === fw4 nftables 原生修复 ===
+    if command -v nft &>/dev/null; then
+        # 1. 确保 forward_docker 链存在
+        nft list chain inet fw4 forward_docker &>/dev/null || {
+            nft add chain inet fw4 forward_docker '{ type filter hook forward priority filter; policy accept; }' 2>/dev/null
+            logger -t docker-fix "Created missing nft chain forward_docker"
+        }
+
+        # 2. 确保 forward 链中有 jump 到 forward_docker 的规则
+        if ! nft list chain inet fw4 forward 2>/dev/null | grep -q 'jump forward_docker'; then
+            nft insert rule inet fw4 forward iifname "docker0" jump forward_docker comment "!fw4: Handle docker IPv4/IPv6 forward traffic" 2>/dev/null
+            logger -t docker-fix "Inserted nft jump rule to forward_docker"
+        fi
+
+        # 3. 确保 NAT/masquerade 规则
+        nft list chain inet fw4 dstnat_docker &>/dev/null || {
+            nft add chain inet fw4 dstnat_docker '{ type nat hook prerouting priority dstnat; policy accept; }' 2>/dev/null
+        }
+        nft list chain inet fw4 srcnat_docker &>/dev/null || {
+            nft add chain inet fw4 srcnat_docker '{ type nat hook postrouting priority srcnat; policy accept; }' 2>/dev/null
+            nft add rule inet fw4 srcnat_docker oifname != "docker0" masquerade 2>/dev/null
+            logger -t docker-fix "Created nft NAT chains for docker"
+        }
+
+        # 4. 确保 FORWARD 基础放行规则
+        if ! nft list chain inet fw4 forward 2>/dev/null | grep -q 'iifname "docker0".*accept'; then
+            nft insert rule inet fw4 forward iifname "docker0" accept 2>/dev/null
+        fi
+        if ! nft list chain inet fw4 forward 2>/dev/null | grep -q 'oifname "docker0".*ct state'; then
+            nft insert rule inet fw4 forward oifname "docker0" ct state established,related accept 2>/dev/null
+        fi
+
+        logger -t docker-fix "nftables docker rules injected successfully"
+    fi
+
+    # === fw3 iptables 兜底（兼容降级场景）===
+    if command -v iptables &>/dev/null; then
+        iptables -C FORWARD -i docker0 -o !docker0 -j ACCEPT 2>/dev/null || \
+            iptables -I FORWARD -i docker0 -o !docker0 -j ACCEPT
+        iptables -C FORWARD -o docker0 -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT 2>/dev/null || \
+            iptables -I FORWARD -o docker0 -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
+    fi
+
+    # === 清理无效的 UCI docker zone（防止 LuCI 显示双 zone）===
+    CHANGED=0
+    for idx in $(seq 30 -1 0); do
+        zname=$(uci -q get firewall.@zone[$idx].name 2>/dev/null)
+        if [ "$zname" = "docker" ]; then
+            uci delete firewall.@zone[$idx]
+            CHANGED=1
+            logger -t docker-fix "Removed stale UCI zone_docker at index $idx"
+        fi
+    done
+    # 同时清理对应的 forwarding
+    for idx in $(seq 30 -1 0); do
+        src=$(uci -q get firewall.@forwarding[$idx].src 2>/dev/null)
+        dest=$(uci -q get firewall.@forwarding[$idx].dest 2>/dev/null)
+        if [ "$src" = "docker" ] || [ "$dest" = "docker" ]; then
+            uci delete firewall.@forwarding[$idx]
+            CHANGED=1
+        fi
+    done
+    if [ "$CHANGED" -eq 1 ]; then
+        uci commit firewall
+        /etc/init.d/firewall reload 2>/dev/null
+        logger -t docker-fix "Cleaned stale UCI docker entries and reloaded firewall"
+    fi
+
+    logger -t docker-fix "Docker fw4 fix completed"
 ) &
 
 exit 0
 RCEOF
 chmod +x files/etc/rc.local
-echo "✅ Docker 防火墙终极修复已集成（fw4适配+编译期预置+自动探测patch）"
+
+# 移除之前无效的 uci-defaults 预置脚本（避免干扰）
+rm -f package/base-files/files/etc/uci-defaults/97-docker-zone-preseed
+rm -f package/base-files/files/etc/uci-defaults/98-docker-firewall-fix
+
+echo "✅ Docker 防火墙终极修复已集成（fw4 nftables 原生版，放弃UCI Zone）"
 
 # ======================================
 # 无线网络配置 - 已验证的LEDE配置
