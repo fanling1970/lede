@@ -17,55 +17,79 @@ sed -i "s/hostname='.*'/hostname='immortalwrt'/g" package/base-files/files/bin/c
 sed -i 's/192.168.1.1/192.168.100.1/g' package/base-files/files/bin/config_generate
 
 # ======================================
-# Docker 防火墙兼容性终极修复方案（适配第三方Dockerman首次启动）
+# Docker 防火墙兼容性终极修复方案（源码级拦截+统一接管）
 # ======================================
-echo "--- 集成 Docker 防火墙终极修复（等待+修补模式） ---"
+echo "--- 集成 Docker 防火墙终极修复（源码级拦截双Zone） ---"
+
+# 【核心】从源码层面禁止 dockerd/luci-app-dockerman 自动创建 firewall zone
+# 这样无论重启多少次，都只会存在我们手动创建的那一个 zone
+echo ">>> Patching dockerd init script to disable auto zone creation..."
+if [ -f package/base-files/files/etc/init.d/dockerd ]; then
+    # 注释掉所有涉及 uci add/set firewall zone 的行
+    sed -i '/uci\s\+add\s\+firewall\s\+zone/s/^/#DISABLED# /' package/base-files/files/etc/init.d/dockerd
+    sed -i '/uci\s\+set\s\+firewall\.@zone/s/^/#DISABLED# /' package/base-files/files/etc/init.d/dockerd
+    sed -i '/uci\s\+commit\s\+firewall/s/^/#DISABLED# /' package/base-files/files/etc/init.d/dockerd
+    echo "✅ Patched package/base-files/files/etc/init.d/dockerd"
+fi
+
+# 同时检查 feeds 中的 dockerd 和 luci-app-dockerman
+for init_script in \
+    feeds/packages/utils/dockerd/files/dockerd.init \
+    feeds/luci/applications/luci-app-dockerman/root/etc/init.d/dockerd \
+    package/luci-app-dockerman/root/etc/init.d/dockerd; do
+    if [ -f "$init_script" ]; then
+        sed -i '/uci\s\+add\s\+firewall\s\+zone/s/^/#DISABLED# /' "$init_script"
+        sed -i '/uci\s\+set\s\+firewall\.@zone/s/^/#DISABLED# /' "$init_script"
+        sed -i '/uci\s\+commit\s\+firewall/s/^/#DISABLED# /' "$init_script"
+        echo "✅ Patched $init_script"
+    fi
+done
+
 mkdir -p package/base-files/files/etc/uci-defaults
 
-# 1. 首次启动时：等待Dockerman创建zone后修补参数 + NAT链保护
+# 1. 首次启动：统一创建完整 Zone + Forwarding + NAT保护
 cat > package/base-files/files/etc/uci-defaults/98-docker-firewall-fix << 'FWEOF'
 #!/bin/sh
-# === Docker 防火墙兼容性修复（仅首次启动执行） ===
-# 策略：不抢先创建zone，等待Dockerman创建后修补其参数
+# === Docker 防火墙统一接管（仅首次启动执行） ===
+# 由于已禁用 dockerd 自动创建 zone，此处负责一次性创建完整配置
 
 (
-    # 阶段1：等待docker0网桥创建（最多60秒）
+    # 等待 docker0 就绪
     for i in $(seq 1 60); do
         ip link show docker0 &>/dev/null && break
         sleep 1
     done
 
-    # 阶段2：等待Dockerman创建firewall zone（最多60秒）
-    ZONE_IDX=""
-    for i in $(seq 1 60); do
-        for idx in $(seq 0 30); do
-            zname=$(uci -q get firewall.@zone[$idx].name 2>/dev/null)
-            if [ "$zname" = "docker" ]; then
-                ZONE_IDX="$idx"
-                break 2
-            fi
-        done
-        sleep 1
+    # 检查是否已有 docker zone（防止重复）
+    HAS_ZONE=""
+    for idx in $(seq 0 30); do
+        zname=$(uci -q get firewall.@zone[$idx].name 2>/dev/null)
+        [ "$zname" = "docker" ] && HAS_ZONE="$idx" && break
     done
 
-    if [ -z "$ZONE_IDX" ]; then
-        logger -t docker-fix "ERROR: docker zone not created by Dockerman after 60s, creating fallback"
+    if [ -z "$HAS_ZONE" ]; then
         uci add firewall zone
         uci set firewall.@zone[-1].name='docker'
         uci set firewall.@zone[-1].network='docker'
-        ZONE_IDX="-1"
+        uci set firewall.@zone[-1].input='ACCEPT'
+        uci set firewall.@zone[-1].output='ACCEPT'
+        uci set firewall.@zone[-1].forward='ACCEPT'
+        uci set firewall.@zone[-1].masq='1'
+        uci set firewall.@zone[-1].mtu_fix='1'
+        uci set firewall.@zone[-1].conntrack='1'
+        logger -t docker-fix "Created unified firewall zone_docker"
+    else
+        # 即使存在也确保参数完整
+        uci set firewall.@zone[$HAS_ZONE].input='ACCEPT'
+        uci set firewall.@zone[$HAS_ZONE].output='ACCEPT'
+        uci set firewall.@zone[$HAS_ZONE].forward='ACCEPT'
+        uci set firewall.@zone[$HAS_ZONE].masq='1'
+        uci set firewall.@zone[$HAS_ZONE].mtu_fix='1'
+        uci set firewall.@zone[$HAS_ZONE].conntrack='1'
+        logger -t docker-fix "Patched existing zone_docker at index $HAS_ZONE"
     fi
 
-    # 阶段3：修补zone关键参数（无论新建还是已有，统一设置确保完整）
-    uci set firewall.@zone[$ZONE_IDX].input='ACCEPT'
-    uci set firewall.@zone[$ZONE_IDX].output='ACCEPT'
-    uci set firewall.@zone[$ZONE_IDX].forward='ACCEPT'
-    uci set firewall.@zone[$ZONE_IDX].masq='1'
-    uci set firewall.@zone[$ZONE_IDX].mtu_fix='1'
-    uci set firewall.@zone[$ZONE_IDX].conntrack='1'
-    logger -t docker-fix "Patched firewall zone_docker parameters at index $ZONE_IDX"
-
-    # 阶段4：确保 docker -> wan 转发规则存在
+    # 确保 docker -> wan forwarding
     HAS_FWD=""
     for idx in $(seq 0 30); do
         src=$(uci -q get firewall.@forwarding[$idx].src 2>/dev/null)
@@ -82,7 +106,7 @@ cat > package/base-files/files/etc/uci-defaults/98-docker-firewall-fix << 'FWEOF
     uci commit firewall
     /etc/init.d/firewall reload 2>/dev/null
 
-    # 阶段5：NAT链保护写入firewall.user（幂等）
+    # NAT链保护（幂等写入）
     if ! grep -q "Docker NAT chain protection" /etc/firewall.user 2>/dev/null; then
         cat >> /etc/firewall.user << 'USEREOF'
 
@@ -97,49 +121,50 @@ USEREOF
         logger -t docker-fix "Appended NAT chain protection to firewall.user"
     fi
 
-    logger -t docker-fix "Docker firewall fix completed on first boot"
+    logger -t docker-fix "Docker firewall unified setup completed"
 ) &
 
 exit 0
 FWEOF
 chmod +x package/base-files/files/etc/uci-defaults/98-docker-firewall-fix
 
-# 2. rc.local 重载防火墙 + 补全 FORWARD 规则（每次启动兜底）
+# 2. rc.local 兜底（每次启动确保 FORWARD 规则 + Zone 完整性）
 mkdir -p files/etc
 cat > files/etc/rc.local << 'RCEOF'
 #!/bin/sh
 
-# Docker FORWARD 规则补全（每次启动兜底）
 (
     for i in $(seq 1 45); do
         if ip link show docker0 &>/dev/null; then
             sleep 5
+            
+            # 兜底：如果 zone 意外丢失则重建
+            HAS_ZONE=""
+            for idx in $(seq 0 30); do
+                zname=$(uci -q get firewall.@zone[$idx].name 2>/dev/null)
+                [ "$zname" = "docker" ] && HAS_ZONE="$idx" && break
+            done
+            if [ -z "$HAS_ZONE" ]; then
+                uci add firewall zone
+                uci set firewall.@zone[-1].name='docker'
+                uci set firewall.@zone[-1].network='docker'
+                uci set firewall.@zone[-1].input='ACCEPT'
+                uci set firewall.@zone[-1].output='ACCEPT'
+                uci set firewall.@zone[-1].forward='ACCEPT'
+                uci set firewall.@zone[-1].masq='1'
+                uci set firewall.@zone[-1].mtu_fix='1'
+                uci set firewall.@zone[-1].conntrack='1'
+                uci commit firewall
+                logger -t docker-fix "rc.local: Recreated missing zone_docker"
+            fi
+            
             /etc/init.d/firewall reload 2>/dev/null
             
-            # 补全FORWARD链
-            if ! iptables -C FORWARD -i docker0 -o !docker0 -j ACCEPT 2>/dev/null; then
+            # 补全 FORWARD 链
+            iptables -C FORWARD -i docker0 -o !docker0 -j ACCEPT 2>/dev/null || \
                 iptables -I FORWARD -i docker0 -o !docker0 -j ACCEPT
-            fi
-            if ! iptables -C FORWARD -o docker0 -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT 2>/dev/null; then
+            iptables -C FORWARD -o docker0 -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT 2>/dev/null || \
                 iptables -I FORWARD -o docker0 -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
-            fi
-            
-            # 验证zone参数是否完整，不完整则修补
-            MASQ=$(uci -q get firewall.zone_docker.masq 2>/dev/null)
-            if [ "$MASQ" != "1" ]; then
-                for idx in $(seq 0 30); do
-                    zname=$(uci -q get firewall.@zone[$idx].name 2>/dev/null)
-                    if [ "$zname" = "docker" ]; then
-                        uci set firewall.@zone[$idx].masq='1'
-                        uci set firewall.@zone[$idx].mtu_fix='1'
-                        uci set firewall.@zone[$idx].forward='ACCEPT'
-                        uci commit firewall
-                        /etc/init.d/firewall reload 2>/dev/null
-                        logger -t docker-fix "rc.local: Repatched incomplete zone_docker"
-                        break
-                    fi
-                done
-            fi
             
             logger -t docker-fix "rc.local: Firewall reloaded & FORWARD rules patched"
             break
@@ -151,7 +176,7 @@ cat > files/etc/rc.local << 'RCEOF'
 exit 0
 RCEOF
 chmod +x files/etc/rc.local
-echo "✅ Docker 防火墙终极修复已集成（等待+修补模式，避免双zone）"
+echo "✅ Docker 防火墙终极修复已集成（源码级拦截双Zone + 统一接管）"
 
 # ======================================
 # 无线网络配置 - 已验证的LEDE配置
