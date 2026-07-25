@@ -17,32 +17,62 @@ sed -i "s/hostname='.*'/hostname='immortalwrt'/g" package/base-files/files/bin/c
 sed -i 's/192.168.1.1/192.168.100.1/g' package/base-files/files/bin/config_generate
 
 # ======================================
-# Docker 防火墙兼容性终极修复方案（fw4 UCI 精确复刻版）
+# Docker 防火墙兼容性终极修复方案（rc.local 单一入口版）
 # ======================================
-echo "--- 集成 Docker 防火墙终极修复（fw4 UCI 精确复刻） ---"
+echo "--- 集成 Docker 防火墙终极修复（rc.local 单一入口） ---"
 
-mkdir -p package/base-files/files/etc/uci-defaults
-cat > package/base-files/files/etc/uci-defaults/98-docker-fw4-fix << 'FWEOF'
+# 清理所有旧的 uci-defaults 脚本（避免干扰和竞争）
+rm -f package/base-files/files/etc/uci-defaults/97-docker-zone-preseed
+rm -f package/base-files/files/etc/uci-defaults/98-docker-fw4-fix
+rm -f package/base-files/files/etc/uci-defaults/98-docker-firewall-fix
+
+# 所有修复逻辑集中在 rc.local
+mkdir -p files/etc
+cat > files/etc/rc.local << 'RCEOF'
 #!/bin/sh
-# === Docker fw4 防火墙精确修复（仅首次启动执行）===
-# 策略：创建与 LuCI 手动添加完全一致的 UCI zone，然后一次性 reload
 
 (
-    # 等待 docker0 就绪
-    for i in $(seq 1 60); do
-        ip link show docker0 &>/dev/null && break
+    # === 阶段1：等待 docker0 和 dockerd 完全就绪 ===
+    DOCKER_READY=0
+    for i in $(seq 1 90); do
+        if ip link show docker0 &>/dev/null && pgrep -x dockerd >/dev/null; then
+            DOCKER_READY=1
+            break
+        fi
         sleep 1
     done
 
-    # 检查是否已有 docker zone
+    if [ "$DOCKER_READY" -eq 0 ]; then
+        logger -t docker-fix "ERROR: docker0 or dockerd not ready after 90s, aborting fix"
+        exit 1
+    fi
+
+    # 额外等待 dockerd 完成 nftables 初始化
+    sleep 10
+    logger -t docker-fix "docker0 and dockerd confirmed ready"
+
+    # === 阶段2：检查并创建/修补 UCI docker zone ===
     HAS_ZONE=""
+    ZONE_COMPLETE=""
     for idx in $(seq 0 30); do
         zname=$(uci -q get firewall.@zone[$idx].name 2>/dev/null)
-        [ "$zname" = "docker" ] && HAS_ZONE="$idx" && break
+        if [ "$zname" = "docker" ]; then
+            HAS_ZONE="$idx"
+            # 检查关键参数是否完整
+            masq=$(uci -q get firewall.@zone[$idx].masq 2>/dev/null)
+            fwd=$(uci -q get firewall.@zone[$idx].forward 2>/dev/null)
+            net=$(uci -q get firewall.@zone[$idx].network 2>/dev/null)
+            family=$(uci -q get firewall.@zone[$idx].family 2>/dev/null)
+            if [ "$masq" = "1" ] && [ "$fwd" = "ACCEPT" ] && [ "$net" = "docker" ] && [ "$family" = "any" ]; then
+                ZONE_COMPLETE="1"
+            fi
+            break
+        fi
     done
 
+    NEED_RELOAD=0
     if [ -z "$HAS_ZONE" ]; then
-        # 精确复刻 LuCI 手动创建的 docker zone 参数
+        # 创建完整的 fw4 兼容 zone
         uci add firewall zone
         uci set firewall.@zone[-1].name='docker'
         uci set firewall.@zone[-1].network='docker'
@@ -53,9 +83,11 @@ cat > package/base-files/files/etc/uci-defaults/98-docker-fw4-fix << 'FWEOF'
         uci set firewall.@zone[-1].mtu_fix='1'
         uci set firewall.@zone[-1].conntrack='1'
         uci set firewall.@zone[-1].family='any'
-        logger -t docker-fix "Created fw4-compatible zone_docker"
-    else
-        # 补全可能缺失的参数
+        NEED_RELOAD=1
+        logger -t docker-fix "Created new fw4-compatible zone_docker"
+    elif [ -z "$ZONE_COMPLETE" ]; then
+        # 补全缺失参数
+        uci set firewall.@zone[$HAS_ZONE].network='docker'
         uci set firewall.@zone[$HAS_ZONE].input='ACCEPT'
         uci set firewall.@zone[$HAS_ZONE].output='ACCEPT'
         uci set firewall.@zone[$HAS_ZONE].forward='ACCEPT'
@@ -63,7 +95,10 @@ cat > package/base-files/files/etc/uci-defaults/98-docker-fw4-fix << 'FWEOF'
         uci set firewall.@zone[$HAS_ZONE].mtu_fix='1'
         uci set firewall.@zone[$HAS_ZONE].conntrack='1'
         uci set firewall.@zone[$HAS_ZONE].family='any'
-        logger -t docker-fix "Patched existing zone_docker at index $HAS_ZONE"
+        NEED_RELOAD=1
+        logger -t docker-fix "Patched incomplete zone_docker at index $HAS_ZONE"
+    else
+        logger -t docker-fix "zone_docker already complete at index $HAS_ZONE"
     fi
 
     # 确保 docker -> wan forwarding
@@ -77,86 +112,47 @@ cat > package/base-files/files/etc/uci-defaults/98-docker-fw4-fix << 'FWEOF'
         uci add firewall forwarding
         uci set firewall.@forwarding[-1].src='docker'
         uci set firewall.@forwarding[-1].dest='wan'
+        NEED_RELOAD=1
         logger -t docker-fix "Added docker->wan forwarding rule"
     fi
 
-    uci commit firewall
-    /etc/init.d/firewall reload 2>/dev/null
-    logger -t docker-fix "Docker fw4 UCI fix completed on first boot"
-) &
+    # 仅在需要时 commit + reload
+    if [ "$NEED_RELOAD" -eq 1 ]; then
+        uci commit firewall
+        /etc/init.d/firewall reload 2>/dev/null
+        logger -t docker-fix "Firewall reloaded with updated docker zone"
+        # reload 后等待 dockerd 重新绑定 nftables
+        sleep 5
+    fi
 
-exit 0
-FWEOF
-chmod +x package/base-files/files/etc/uci-defaults/98-docker-fw4-fix
+    # === 阶段3：验证 nftables 规则，必要时重启 dockerd ===
+    NFT_OK=""
+    if nft list chain inet fw4 forward 2>/dev/null | grep -q 'iifname "docker0".*jump forward_docker'; then
+        NFT_OK="1"
+    fi
 
-# rc.local：仅做兜底检查，绝不执行 firewall reload
-mkdir -p files/etc
-cat > files/etc/rc.local << 'RCEOF'
-#!/bin/sh
-
-(
-    for i in $(seq 1 60); do
-        if ip link show docker0 &>/dev/null; then
-            sleep 8
-
-            # 检查 UCI zone 是否存在且完整
-            HAS_ZONE=""
-            MASQ_OK=""
-            for idx in $(seq 0 30); do
-                zname=$(uci -q get firewall.@zone[$idx].name 2>/dev/null)
-                if [ "$zname" = "docker" ]; then
-                    HAS_ZONE="$idx"
-                    masq=$(uci -q get firewall.@zone[$idx].masq 2>/dev/null)
-                    fwd=$(uci -q get firewall.@zone[$idx].forward 2>/dev/null)
-                    [ "$masq" = "1" ] && [ "$fwd" = "ACCEPT" ] && MASQ_OK="1"
-                    break
-                fi
-            done
-
-            if [ -z "$HAS_ZONE" ] || [ -z "$MASQ_OK" ]; then
-                # Zone 缺失或不完整，修补后 reload（仅在必要时）
-                if [ -z "$HAS_ZONE" ]; then
-                    uci add firewall zone
-                    uci set firewall.@zone[-1].name='docker'
-                    uci set firewall.@zone[-1].network='docker'
-                    HAS_ZONE="-1"
-                    logger -t docker-fix "rc.local: Created missing zone_docker"
-                fi
-                uci set firewall.@zone[$HAS_ZONE].input='ACCEPT'
-                uci set firewall.@zone[$HAS_ZONE].output='ACCEPT'
-                uci set firewall.@zone[$HAS_ZONE].forward='ACCEPT'
-                uci set firewall.@zone[$HAS_ZONE].masq='1'
-                uci set firewall.@zone[$HAS_ZONE].mtu_fix='1'
-                uci set firewall.@zone[$HAS_ZONE].conntrack='1'
-                uci set firewall.@zone[$HAS_ZONE].family='any'
-                uci commit firewall
-                /etc/init.d/firewall reload 2>/dev/null
-                logger -t docker-fix "rc.local: Repatched zone_docker and reloaded"
-            else
-                # Zone 完整，检查 nftables 规则是否存在
-                if ! nft list chain inet fw4 forward 2>/dev/null | grep -q 'jump forward_docker'; then
-                    # 规则丢失但 UCI 正确，说明 dockerd 未正确绑定，重启 dockerd
-                    /etc/init.d/dockerd restart 2>/dev/null
-                    logger -t docker-fix "rc.local: Restarted dockerd to bind nft rules"
-                else
-                    logger -t docker-fix "rc.local: Docker firewall OK, no action needed"
-                fi
-            fi
-
-            break
+    if [ -z "$NFT_OK" ]; then
+        logger -t docker-fix "WARNING: nft jump rule missing despite valid UCI zone, restarting dockerd..."
+        /etc/init.d/dockerd restart 2>/dev/null
+        sleep 8
+        # 二次验证
+        if nft list chain inet fw4 forward 2>/dev/null | grep -q 'iifname "docker0".*jump forward_docker'; then
+            logger -t docker-fix "SUCCESS: nft rules restored after dockerd restart"
+        else
+            logger -t docker-fix "CRITICAL: nft rules still missing after dockerd restart!"
         fi
-        sleep 1
-    done
+    else
+        logger -t docker-fix "nftables docker rules verified OK"
+    fi
+
+    logger -t docker-fix "=== Docker fw4 fix completed ==="
 ) &
 
 exit 0
 RCEOF
 chmod +x files/etc/rc.local
 
-# 清理旧版无效脚本
-rm -f package/base-files/files/etc/uci-defaults/97-docker-zone-preseed
-
-echo "✅ Docker 防火墙终极修复已集成（fw4 UCI 精确复刻 + 智能兜底）"
+echo "✅ Docker 防火墙终极修复已集成（rc.local 单一入口 + 三阶段保障）"
 
 # ======================================
 # 无线网络配置 - 已验证的LEDE配置
