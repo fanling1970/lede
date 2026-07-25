@@ -17,142 +17,108 @@ sed -i "s/hostname='.*'/hostname='immortalwrt'/g" package/base-files/files/bin/c
 sed -i 's/192.168.1.1/192.168.100.1/g' package/base-files/files/bin/config_generate
 
 # ======================================
-# Docker 防火墙兼容性终极修复方案（rc.local 单一入口版）
+# Docker 防火墙兼容性终极修复方案（纯 nftables 注入 + 清理残留）
 # ======================================
-echo "--- 集成 Docker 防火墙终极修复（rc.local 单一入口） ---"
+echo "--- 集成 Docker 防火墙终极修复（纯 nftables 注入版） ---"
 
-# 清理所有旧的 uci-defaults 脚本（避免干扰和竞争）
+# 清理所有旧的 uci-defaults 和 rc.local 中的 UCI 相关逻辑
 rm -f package/base-files/files/etc/uci-defaults/97-docker-zone-preseed
 rm -f package/base-files/files/etc/uci-defaults/98-docker-fw4-fix
 rm -f package/base-files/files/etc/uci-defaults/98-docker-firewall-fix
 
-# 所有修复逻辑集中在 rc.local
 mkdir -p files/etc
 cat > files/etc/rc.local << 'RCEOF'
 #!/bin/sh
 
 (
     # === 阶段1：等待 docker0 和 dockerd 完全就绪 ===
-    DOCKER_READY=0
     for i in $(seq 1 90); do
         if ip link show docker0 &>/dev/null && pgrep -x dockerd >/dev/null; then
-            DOCKER_READY=1
             break
         fi
         sleep 1
     done
 
-    if [ "$DOCKER_READY" -eq 0 ]; then
-        logger -t docker-fix "ERROR: docker0 or dockerd not ready after 90s, aborting fix"
-        exit 1
+    # 额外等待 dockerd 完成 nftables 链创建
+    sleep 12
+    logger -t docker-fix "docker0 and dockerd ready, starting nft check"
+
+    # === 阶段2：验证并注入 nftables jump 规则（绝不触发 firewall reload）===
+    NFT_JUMP_OK=""
+    if nft list chain inet fw4 forward 2>/dev/null | grep -q 'iifname "docker0".*jump forward_docker'; then
+        NFT_JUMP_OK="1"
     fi
 
-    # 额外等待 dockerd 完成 nftables 初始化
-    sleep 10
-    logger -t docker-fix "docker0 and dockerd confirmed ready"
+    if [ -z "$NFT_JUMP_OK" ]; then
+        # 确保 forward_docker 链存在
+        if ! nft list chain inet fw4 forward_docker &>/dev/null; then
+            nft add chain inet fw4 forward_docker '{ type filter hook forward priority filter; policy accept; }' 2>/dev/null
+            logger -t docker-fix "Created missing nft chain forward_docker"
+        fi
 
-    # === 阶段2：检查并创建/修补 UCI docker zone ===
-    HAS_ZONE=""
-    ZONE_COMPLETE=""
-    for idx in $(seq 0 30); do
+        # 注入 jump 规则（幂等）
+        nft insert rule inet fw4 forward iifname "docker0" jump forward_docker comment "!fw4: Handle docker IPv4/IPv6 forward traffic" 2>/dev/null
+        logger -t docker-fix "Injected nft jump rule to forward_docker"
+
+        # 确保基础 FORWARD 放行
+        if ! nft list chain inet fw4 forward 2>/dev/null | grep -q 'iifname "docker0".*accept'; then
+            nft insert rule inet fw4 forward iifname "docker0" accept 2>/dev/null
+        fi
+        if ! nft list chain inet fw4 forward 2>/dev/null | grep -q 'oifname "docker0".*ct state'; then
+            nft insert rule inet fw4 forward oifname "docker0" ct state established,related accept 2>/dev/null
+        fi
+
+        # 确保 NAT 链存在
+        if ! nft list chain inet fw4 srcnat_docker &>/dev/null; then
+            nft add chain inet fw4 srcnat_docker '{ type nat hook postrouting priority srcnat; policy accept; }' 2>/dev/null
+            nft add rule inet fw4 srcnat_docker oifname != "docker0" masquerade 2>/dev/null
+            logger -t docker-fix "Created nft srcnat_docker chain with masquerade"
+        fi
+    else
+        logger -t docker-fix "nft jump rule already present, no injection needed"
+    fi
+
+    # === 阶段3：清理所有 UCI 中的 docker zone/forwarding 残留（防止 LuCI 显示异常）===
+    CHANGED=0
+    for idx in $(seq 30 -1 0); do
         zname=$(uci -q get firewall.@zone[$idx].name 2>/dev/null)
         if [ "$zname" = "docker" ]; then
-            HAS_ZONE="$idx"
-            # 检查关键参数是否完整
-            masq=$(uci -q get firewall.@zone[$idx].masq 2>/dev/null)
-            fwd=$(uci -q get firewall.@zone[$idx].forward 2>/dev/null)
-            net=$(uci -q get firewall.@zone[$idx].network 2>/dev/null)
-            family=$(uci -q get firewall.@zone[$idx].family 2>/dev/null)
-            if [ "$masq" = "1" ] && [ "$fwd" = "ACCEPT" ] && [ "$net" = "docker" ] && [ "$family" = "any" ]; then
-                ZONE_COMPLETE="1"
-            fi
-            break
+            uci delete firewall.@zone[$idx]
+            CHANGED=1
+            logger -t docker-fix "Removed stale UCI zone_docker at index $idx"
         fi
     done
-
-    NEED_RELOAD=0
-    if [ -z "$HAS_ZONE" ]; then
-        # 创建完整的 fw4 兼容 zone
-        uci add firewall zone
-        uci set firewall.@zone[-1].name='docker'
-        uci set firewall.@zone[-1].network='docker'
-        uci set firewall.@zone[-1].input='ACCEPT'
-        uci set firewall.@zone[-1].output='ACCEPT'
-        uci set firewall.@zone[-1].forward='ACCEPT'
-        uci set firewall.@zone[-1].masq='1'
-        uci set firewall.@zone[-1].mtu_fix='1'
-        uci set firewall.@zone[-1].conntrack='1'
-        uci set firewall.@zone[-1].family='any'
-        NEED_RELOAD=1
-        logger -t docker-fix "Created new fw4-compatible zone_docker"
-    elif [ -z "$ZONE_COMPLETE" ]; then
-        # 补全缺失参数
-        uci set firewall.@zone[$HAS_ZONE].network='docker'
-        uci set firewall.@zone[$HAS_ZONE].input='ACCEPT'
-        uci set firewall.@zone[$HAS_ZONE].output='ACCEPT'
-        uci set firewall.@zone[$HAS_ZONE].forward='ACCEPT'
-        uci set firewall.@zone[$HAS_ZONE].masq='1'
-        uci set firewall.@zone[$HAS_ZONE].mtu_fix='1'
-        uci set firewall.@zone[$HAS_ZONE].conntrack='1'
-        uci set firewall.@zone[$HAS_ZONE].family='any'
-        NEED_RELOAD=1
-        logger -t docker-fix "Patched incomplete zone_docker at index $HAS_ZONE"
-    else
-        logger -t docker-fix "zone_docker already complete at index $HAS_ZONE"
-    fi
-
-    # 确保 docker -> wan forwarding
-    HAS_FWD=""
-    for idx in $(seq 0 30); do
+    for idx in $(seq 30 -1 0); do
         src=$(uci -q get firewall.@forwarding[$idx].src 2>/dev/null)
         dest=$(uci -q get firewall.@forwarding[$idx].dest 2>/dev/null)
-        [ "$src" = "docker" ] && [ "$dest" = "wan" ] && HAS_FWD="1" && break
-    done
-    if [ -z "$HAS_FWD" ]; then
-        uci add firewall forwarding
-        uci set firewall.@forwarding[-1].src='docker'
-        uci set firewall.@forwarding[-1].dest='wan'
-        NEED_RELOAD=1
-        logger -t docker-fix "Added docker->wan forwarding rule"
-    fi
-
-    # 仅在需要时 commit + reload
-    if [ "$NEED_RELOAD" -eq 1 ]; then
-        uci commit firewall
-        /etc/init.d/firewall reload 2>/dev/null
-        logger -t docker-fix "Firewall reloaded with updated docker zone"
-        # reload 后等待 dockerd 重新绑定 nftables
-        sleep 5
-    fi
-
-    # === 阶段3：验证 nftables 规则，必要时重启 dockerd ===
-    NFT_OK=""
-    if nft list chain inet fw4 forward 2>/dev/null | grep -q 'iifname "docker0".*jump forward_docker'; then
-        NFT_OK="1"
-    fi
-
-    if [ -z "$NFT_OK" ]; then
-        logger -t docker-fix "WARNING: nft jump rule missing despite valid UCI zone, restarting dockerd..."
-        /etc/init.d/dockerd restart 2>/dev/null
-        sleep 8
-        # 二次验证
-        if nft list chain inet fw4 forward 2>/dev/null | grep -q 'iifname "docker0".*jump forward_docker'; then
-            logger -t docker-fix "SUCCESS: nft rules restored after dockerd restart"
-        else
-            logger -t docker-fix "CRITICAL: nft rules still missing after dockerd restart!"
+        if [ "$src" = "docker" ] || [ "$dest" = "docker" ]; then
+            uci delete firewall.@forwarding[$idx]
+            CHANGED=1
+            logger -t docker-fix "Removed stale UCI forwarding involving docker at index $idx"
         fi
-    else
-        logger -t docker-fix "nftables docker rules verified OK"
+    done
+    if [ "$CHANGED" -eq 1 ]; then
+        uci commit firewall
+        # 注意：这里不执行 firewall reload！避免冲刷刚注入的 nft 规则
+        # 仅提交 UCI 以清除 LuCI 界面残留，nftables 状态保持不变
+        logger -t docker-fix "Committed UCI cleanup (no reload to preserve nft rules)"
     fi
 
-    logger -t docker-fix "=== Docker fw4 fix completed ==="
+    # === 阶段4：最终验证 ===
+    if nft list chain inet fw4 forward 2>/dev/null | grep -q 'iifname "docker0".*jump forward_docker'; then
+        logger -t docker-fix "✅ FINAL: nftables docker rules VERIFIED OK"
+    else
+        logger -t docker-fix "❌ FINAL: nftables docker rules STILL MISSING!"
+    fi
+
+    logger -t docker-fix "=== Docker fw4 pure-nft fix completed ==="
 ) &
 
 exit 0
 RCEOF
 chmod +x files/etc/rc.local
 
-echo "✅ Docker 防火墙终极修复已集成（rc.local 单一入口 + 三阶段保障）"
+echo "✅ Docker 防火墙终极修复已集成（纯 nftables 注入 + UCI 残留清理 + 零 reload）"
 
 # ======================================
 # 无线网络配置 - 已验证的LEDE配置
