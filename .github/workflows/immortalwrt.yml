@@ -168,7 +168,7 @@ jobs:
           git clone --depth=1 https://github.com/lisaac/luci-lib-docker.git tmp-lib-docker
           git clone --depth=1 https://github.com/lisaac/luci-app-dockerman.git tmp-app-dockerman
 
-          # 3. 提取实际包目录到 package 根层级（Makefile 移到顶层，编译系统才能识别）
+          # 3. 提取实际包目录到 package 根层级
           mv tmp-lib-docker/collections/luci-lib-docker package/luci-lib-docker
           mv tmp-app-dockerman/applications/luci-app-dockerman package/luci-app-dockerman
 
@@ -211,35 +211,35 @@ jobs:
           mkdir -p files/etc/config
           cat >> files/etc/config/firewall << 'EOF'
 
-config zone
-    option name 'docker'
-    list network 'docker'
-    option input 'ACCEPT'
-    option output 'ACCEPT'
-    option forward 'ACCEPT'
-    option masq '1'
-    option mtu_fix '1'
-    list device 'docker0'
-    list device 'br-+'
-    list device 'veth+'
+          config zone
+              option name 'docker'
+              list network 'docker'
+              option input 'ACCEPT'
+              option output 'ACCEPT'
+              option forward 'ACCEPT'
+              option masq '1'
+              option mtu_fix '1'
+              list device 'docker0'
+              list device 'br-+'
+              list device 'veth+'
 
-config forwarding
-    option src 'docker'
-    option dest 'wan'
+          config forwarding
+              option src 'docker'
+              option dest 'wan'
 
-config forwarding
-    option src 'lan'
-    option dest 'docker'
-EOF
+          config forwarding
+              option src 'lan'
+              option dest 'docker'
+          EOF
 
           # 3. 【防重复核心】首次开机禁用dockerd自动写入防火墙
           mkdir -p files/etc/uci-defaults
           cat > files/etc/uci-defaults/99-fix-dockerd-firewall << 'EOF'
-#!/bin/sh
-# 移除dockerd启动时自动添加防火墙规则的逻辑，彻底避免重复docker区域
-sed -i '/uci add firewall zone/,/uci commit firewall/d' /etc/init.d/dockerd
-exit 0
-EOF
+          #!/bin/sh
+          # 移除dockerd启动时自动添加防火墙规则的逻辑，彻底避免重复docker区域
+          sed -i '/uci add firewall zone/,/uci commit firewall/d' /etc/init.d/dockerd
+          exit 0
+          EOF
           chmod +x files/etc/uci-defaults/99-fix-dockerd-firewall
 
           echo "自定义系统补丁集成完成"
