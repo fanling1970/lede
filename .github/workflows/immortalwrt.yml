@@ -186,7 +186,7 @@ jobs:
 
       - name: 安装软件源
         run: cd openwrt && ./scripts/feeds install -a
-		
+
       # 【根源修复】编译期禁用dockerd自动添加防火墙，彻底杜绝重复
       - name: 源码级禁用dockerd自动写入防火墙
         run: |
