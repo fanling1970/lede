@@ -186,8 +186,22 @@ jobs:
 
       - name: 安装软件源
         run: cd openwrt && ./scripts/feeds install -a
+		
+      # 【根源修复】编译期禁用dockerd自动添加防火墙，彻底杜绝重复
+      - name: 源码级禁用dockerd自动写入防火墙
+        run: |
+          cd openwrt
+          # 自动定位dockerd启动脚本
+          DOCKERD_INIT=$(find package/feeds -name "dockerd.init" | head -1)
+          if [ -n "$DOCKERD_INIT" ]; then
+              # 删除所有uci操作防火墙的代码行，彻底关闭自动添加
+              sed -i '/uci.*firewall/d' "$DOCKERD_INIT"
+              echo "dockerd自动添加防火墙已从源码禁用"
+          else
+              echo "未找到dockerd.init，跳过源码修改"
+          fi		
 
-      # 【集成系统补丁】CPU温度 + Docker防火墙标准配置 + 彻底防重复
+      # 【集成系统补丁】CPU温度 + Docker防火墙标准配置（全量清理防重复）
       - name: 集成自定义系统补丁与脚本
         run: |
           # 1. CPU温度读取脚本
@@ -207,33 +221,35 @@ jobs:
           echo 'fi' >> files/sbin/cpuinfo
           chmod +x files/sbin/cpuinfo
 
-          # 2. 防火墙配置脚本（首次开机执行，先清后加，保证只有一条）
+          # 2. 防火墙配置脚本（首次开机全量清理后写入，保证全局唯一）
           mkdir -p files/etc/uci-defaults
           cat > files/etc/uci-defaults/99-docker-firewall << 'EOF'
           #!/bin/sh
 
-          # ========== 第一步：彻底清理所有旧的docker相关规则，避免重复 ==========
-          # 清理所有名为docker的zone
-          while uci -q get firewall.@zone[-1].name >/dev/null; do
-              if [ "$(uci -q get firewall.@zone[-1].name)" = "docker" ]; then
-                  uci delete firewall.@zone[-1]
+          # ========== 全量清理所有docker相关规则（遍历所有位置，无遗漏） ==========
+          # 清理所有名为docker的区域
+          i=0
+          while uci -q get firewall.@zone[$i] >/dev/null; do
+              if [ "$(uci -q get firewall.@zone[$i].name)" = "docker" ]; then
+                  uci delete firewall.@zone[$i]
               else
-                  break
-              fi
-          done
-          # 清理所有src或dest为docker的转发规则
-          idx=0
-          while uci -q get firewall.@forwarding[$idx] >/dev/null; do
-              src=$(uci -q get firewall.@forwarding[$idx].src)
-              dest=$(uci -q get firewall.@forwarding[$idx].dest)
-              if [ "$src" = "docker" ] || [ "$dest" = "docker" ]; then
-                  uci delete firewall.@forwarding[$idx]
-              else
-                  idx=$((idx + 1))
+                  i=$((i + 1))
               fi
           done
 
-          # ========== 第二步：写入标准docker防火墙配置 ==========
+          # 清理所有涉及docker的转发规则
+          i=0
+          while uci -q get firewall.@forwarding[$i] >/dev/null; do
+              src=$(uci -q get firewall.@forwarding[$i].src)
+              dest=$(uci -q get firewall.@forwarding[$i].dest)
+              if [ "$src" = "docker" ] || [ "$dest" = "docker" ]; then
+                  uci delete firewall.@forwarding[$i]
+              else
+                  i=$((i + 1))
+              fi
+          done
+
+          # ========== 写入标准docker防火墙配置 ==========
           uci add firewall zone
           uci set firewall.@zone[-1].name='docker'
           uci add_list firewall.@zone[-1].network='docker'
@@ -257,10 +273,6 @@ jobs:
           uci set firewall.@forwarding[-1].dest='docker'
 
           uci commit firewall
-
-          # ========== 第三步：彻底禁用dockerd自动修改防火墙，永久防重复 ==========
-          sed -i '/uci add firewall zone/,/uci commit firewall/d' /etc/init.d/dockerd
-
           exit 0
           EOF
           chmod +x files/etc/uci-defaults/99-docker-firewall
