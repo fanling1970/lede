@@ -187,7 +187,7 @@ jobs:
       - name: 安装软件源
         run: cd openwrt && ./scripts/feeds install -a
 
-      # 【集成系统补丁】CPU温度 + Docker防火墙自修复 + 防重复区域
+      # 【集成系统补丁】CPU温度 + Docker防火墙动态注入 + 防重复
       - name: 集成自定义系统补丁与脚本
         run: |
           # 1. CPU温度读取脚本
@@ -207,40 +207,43 @@ jobs:
           echo 'fi' >> files/sbin/cpuinfo
           chmod +x files/sbin/cpuinfo
 
-          # 2. 静态写入Docker防火墙配置（开机即加载，解决容器开机无网络）
-          mkdir -p files/etc/config
-          cat >> files/etc/config/firewall << 'EOF'
-
-          config zone
-              option name 'docker'
-              list network 'docker'
-              option input 'ACCEPT'
-              option output 'ACCEPT'
-              option forward 'ACCEPT'
-              option masq '1'
-              option mtu_fix '1'
-              list device 'docker0'
-              list device 'br-+'
-              list device 'veth+'
-
-          config forwarding
-              option src 'docker'
-              option dest 'wan'
-
-          config forwarding
-              option src 'lan'
-              option dest 'docker'
-          EOF
-
-          # 3. 【防重复核心】首次开机禁用dockerd自动写入防火墙
+          # 2. 防火墙动态注入脚本（首次开机执行，不覆盖原有lan/wan配置）
           mkdir -p files/etc/uci-defaults
-          cat > files/etc/uci-defaults/99-fix-dockerd-firewall << 'EOF'
+          cat > files/etc/uci-defaults/99-docker-firewall << 'EOF'
           #!/bin/sh
-          # 移除dockerd启动时自动添加防火墙规则的逻辑，彻底避免重复docker区域
+          # 检测是否已存在docker区域，避免重复添加
+          if ! uci -q get firewall.@zone[0].name | grep -q docker; then
+              # 添加docker区域
+              uci add firewall zone
+              uci set firewall.@zone[-1].name='docker'
+              uci add_list firewall.@zone[-1].network='docker'
+              uci set firewall.@zone[-1].input='ACCEPT'
+              uci set firewall.@zone[-1].output='ACCEPT'
+              uci set firewall.@zone[-1].forward='ACCEPT'
+              uci set firewall.@zone[-1].masq='1'
+              uci set firewall.@zone[-1].mtu_fix='1'
+              uci add_list firewall.@zone[-1].device='docker0'
+              uci add_list firewall.@zone[-1].device='br-+'
+              uci add_list firewall.@zone[-1].device='veth+'
+
+              # 添加docker -> wan转发
+              uci add firewall forwarding
+              uci set firewall.@forwarding[-1].src='docker'
+              uci set firewall.@forwarding[-1].dest='wan'
+
+              # 添加lan -> docker转发
+              uci add firewall forwarding
+              uci set firewall.@forwarding[-1].src='lan'
+              uci set firewall.@forwarding[-1].dest='docker'
+
+              uci commit firewall
+          fi
+
+          # 彻底禁用dockerd自动修改防火墙的逻辑，杜绝重复
           sed -i '/uci add firewall zone/,/uci commit firewall/d' /etc/init.d/dockerd
           exit 0
           EOF
-          chmod +x files/etc/uci-defaults/99-fix-dockerd-firewall
+          chmod +x files/etc/uci-defaults/99-docker-firewall
 
           echo "自定义系统补丁集成完成"
 
