@@ -146,7 +146,7 @@ jobs:
         cd openwrt
         $GITHUB_WORKSPACE/$DIY_P1_SH
 
-    # 【关键修改】替换官方Dockerman为第三方完整版 + APK版本号适配
+    # 【关键修改】替换官方Dockerman为第三方完整版 + APK版本号适配 + 删除自带防火墙自动配置
     - name: 替换为第三方完整版 Dockerman
       run: |
         cd openwrt
@@ -170,8 +170,12 @@ jobs:
         # 5. 移除版本号v前缀，适配APK包格式强制校验
         sed -i 's/PKG_VERSION:=v/PKG_VERSION:=/g' package/luci-lib-docker/Makefile
         sed -i 's/PKG_VERSION:=v/PKG_VERSION:=/g' package/luci-app-dockerman/Makefile
-        
-        echo "第三方 Dockerman 替换完成，已适配APK格式"
+
+        # ***** 新增：删除 dockerman 自带的 uci-defaults 自动防火墙脚本 *****
+        # 该脚本会在每次启动时自动添加防火墙区域，与我们预置的冲突导致重复
+        rm -f package/luci-app-dockerman/root/usr/share/uci-defaults/luci-app-dockerman
+
+        echo "第三方 Dockerman 替换完成，已适配APK格式，并已移除自动防火墙脚本"
 
     - name: 更新软件源
       run: cd openwrt && ./scripts/feeds update -a
@@ -197,10 +201,10 @@ jobs:
         echo 'fi' >> files/sbin/cpuinfo
         chmod +x files/sbin/cpuinfo
 
-    # ==================== 新增：预置 Docker 防火墙配置 ====================
+    # ==================== 预置Docker防火墙配置（增强版） ====================
     - name: 预置Docker防火墙配置
       run: |
-        # 创建防火墙自动配置脚本（uci-defaults）
+        # 1. 创建防火墙自动配置脚本（首次启动执行）
         mkdir -p files/etc/uci-defaults
         cat > files/etc/uci-defaults/99-docker-firewall << "EOF"
         #!/bin/sh
@@ -227,11 +231,19 @@ jobs:
         EOF
         chmod +x files/etc/uci-defaults/99-docker-firewall
         
-        # 禁用 Docker 自身的防火墙管理，避免重启后出现第二个 docker 区域
+        # 2. 禁用 Docker 自身的 iptables 管理（双重保险）
         mkdir -p files/etc/config
         cat > files/etc/config/dockerd << "EOF"
         config dockerd
             option iptables '0'
+        EOF
+        
+        # 3. 同时创建 daemon.json，让 Docker 守护进程彻底忽略防火墙
+        mkdir -p files/etc/docker
+        cat > files/etc/docker/daemon.json << "EOF"
+        {
+          "iptables": false
+        }
         EOF
     # ================================================================
 
