@@ -187,21 +187,7 @@ jobs:
       - name: 安装软件源
         run: cd openwrt && ./scripts/feeds install -a
 
-      # 【根源修复】编译期禁用dockerd自动添加防火墙，彻底杜绝重复
-      - name: 源码级禁用dockerd自动写入防火墙
-        run: |
-          cd openwrt
-          # 自动定位dockerd启动脚本
-          DOCKERD_INIT=$(find package/feeds -name "dockerd.init" | head -1)
-          if [ -n "$DOCKERD_INIT" ]; then
-              # 删除所有uci操作防火墙的代码行，彻底关闭自动添加
-              sed -i '/uci.*firewall/d' "$DOCKERD_INIT"
-              echo "dockerd自动添加防火墙已从源码禁用"
-          else
-              echo "未找到dockerd.init，跳过源码修改"
-          fi		
-
-      # 【集成系统补丁】CPU温度 + Docker防火墙标准配置（全量清理防重复）
+      # 【集成系统补丁】CPU温度 + Docker启动顺序优化（开机即有网，零重复）
       - name: 集成自定义系统补丁与脚本
         run: |
           # 1. CPU温度读取脚本
@@ -221,61 +207,18 @@ jobs:
           echo 'fi' >> files/sbin/cpuinfo
           chmod +x files/sbin/cpuinfo
 
-          # 2. 防火墙配置脚本（首次开机全量清理后写入，保证全局唯一）
+          # 2. 调整dockerd启动顺序，晚于防火墙启动（解决开机无网络，零重复）
           mkdir -p files/etc/uci-defaults
-          cat > files/etc/uci-defaults/99-docker-firewall << 'EOF'
+          cat > files/etc/uci-defaults/99-fix-docker-start << 'EOF'
           #!/bin/sh
-
-          # ========== 全量清理所有docker相关规则（遍历所有位置，无遗漏） ==========
-          # 清理所有名为docker的区域
-          i=0
-          while uci -q get firewall.@zone[$i] >/dev/null; do
-              if [ "$(uci -q get firewall.@zone[$i].name)" = "docker" ]; then
-                  uci delete firewall.@zone[$i]
-              else
-                  i=$((i + 1))
-              fi
-          done
-
-          # 清理所有涉及docker的转发规则
-          i=0
-          while uci -q get firewall.@forwarding[$i] >/dev/null; do
-              src=$(uci -q get firewall.@forwarding[$i].src)
-              dest=$(uci -q get firewall.@forwarding[$i].dest)
-              if [ "$src" = "docker" ] || [ "$dest" = "docker" ]; then
-                  uci delete firewall.@forwarding[$i]
-              else
-                  i=$((i + 1))
-              fi
-          done
-
-          # ========== 写入标准docker防火墙配置 ==========
-          uci add firewall zone
-          uci set firewall.@zone[-1].name='docker'
-          uci add_list firewall.@zone[-1].network='docker'
-          uci set firewall.@zone[-1].input='ACCEPT'
-          uci set firewall.@zone[-1].output='ACCEPT'
-          uci set firewall.@zone[-1].forward='ACCEPT'
-          uci set firewall.@zone[-1].masq='1'
-          uci set firewall.@zone[-1].mtu_fix='1'
-          uci add_list firewall.@zone[-1].device='docker0'
-          uci add_list firewall.@zone[-1].device='br-+'
-          uci add_list firewall.@zone[-1].device='veth+'
-
-          # docker -> wan 转发（容器访问外网）
-          uci add firewall forwarding
-          uci set firewall.@forwarding[-1].src='docker'
-          uci set firewall.@forwarding[-1].dest='wan'
-
-          # lan -> docker 转发（局域网访问容器）
-          uci add firewall forwarding
-          uci set firewall.@forwarding[-1].src='lan'
-          uci set firewall.@forwarding[-1].dest='docker'
-
-          uci commit firewall
+          # 将dockerd启动优先级设为99，确保防火墙完全启动后再运行
+          sed -i 's/^START=.*/START=99/' /etc/init.d/dockerd
+          # 重新生效启动顺序
+          /etc/init.d/dockerd disable
+          /etc/init.d/dockerd enable
           exit 0
           EOF
-          chmod +x files/etc/uci-defaults/99-docker-firewall
+          chmod +x files/etc/uci-defaults/99-fix-docker-start
 
           echo "自定义系统补丁集成完成"
 
