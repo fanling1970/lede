@@ -123,4 +123,4 @@ sed -i '/CONFIG_PACKAGE_shadowsocks-rust/d' .config
 echo "# CONFIG_PACKAGE_shadowsocks-rust is not set" >> .config
 rm -rf feeds/packages/net/shadowsocks-rust
 
-echo "=== diy-part2.sh 执行完成（含Docker首次启动修复+LEDE无线配置）==="
+echo "=== diy-part2.sh 执行完成==="
