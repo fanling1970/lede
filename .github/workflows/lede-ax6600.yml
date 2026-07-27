@@ -1,4 +1,4 @@
-name: lede 手动固件编译
+name: lede-ax6600手动固件编译
 # 仅手动触发，无自动编译规则
 on:
   workflow_dispatch:
