@@ -9,7 +9,7 @@
 #
 # updated version ref: https://github.com/dxdf/ActionsBuildOpenWRT
 
-name: lede
+name: lede-docker
 
 # 禁用自动触发，仅保留手动触发
 on:
