@@ -9,6 +9,9 @@
 #
 # updated version ref: https://github.com/dxdf/ActionsBuildOpenWRT
 # 新增：替换官方简陋Dockerman为Lisaac第三方完整版（IPK格式适配）
+# 修复：调整Dockerman替换执行顺序，确保feeds旧版被正确清理
+# 修复：优化Docker启动顺序，解决开机容器无网络，防火墙零重复
+#
 
 name: lede
 
@@ -140,7 +143,7 @@ jobs:
         echo "克隆 LEDE 源码..."
         git clone $REPO_URL openwrt
         git -C openwrt checkout de1795d
-        echo "✅ 源码克隆完成"
+        echo "✅ 源码克隆完成（内核6.12对应版本）"
 
     - name: 加载自定义软件源
       run: |
@@ -149,13 +152,17 @@ jobs:
         cd openwrt
         $GITHUB_WORKSPACE/$DIY_P1_SH
 
-    # 【关键修改】替换官方Dockerman为第三方完整版
+    - name: 更新软件源
+      run: cd openwrt && ./scripts/feeds update -a
+
+    # 【关键修改】替换官方Dockerman为第三方完整版（移至update后执行，确保旧版被正确清理）
     - name: 替换为第三方完整版 Dockerman
       run: |
         cd openwrt
-        # 1. 彻底清理所有同名包，杜绝双版本冲突
+        # 1. 彻底清理所有同名包，覆盖lede所有默认路径，杜绝双版本冲突
         rm -rf feeds/luci/applications/luci-app-dockerman
         rm -rf feeds/luci/collections/luci-lib-docker
+        rm -rf feeds/luci/libs/luci-lib-docker
         rm -rf feeds/packages/utils/luci-lib-docker
         rm -rf package/luci-app-dockerman package/luci-lib-docker
 
@@ -163,7 +170,7 @@ jobs:
         git clone --depth=1 https://github.com/lisaac/luci-lib-docker.git tmp-lib-docker
         git clone --depth=1 https://github.com/lisaac/luci-app-dockerman.git tmp-app-dockerman
 
-        # 3. 提取实际包目录到 package 根层级
+        # 3. 提取实际包目录到 package 根层级（优先级高于feeds，自动生效）
         mv tmp-lib-docker/collections/luci-lib-docker package/luci-lib-docker
         mv tmp-app-dockerman/applications/luci-app-dockerman package/luci-app-dockerman
 
@@ -174,13 +181,27 @@ jobs:
         sed -i 's/PKG_VERSION:=v/PKG_VERSION:=/g' package/luci-lib-docker/Makefile
         sed -i 's/PKG_VERSION:=v/PKG_VERSION:=/g' package/luci-app-dockerman/Makefile
         
-        echo "第三方 Dockerman 替换完成"
-
-    - name: 更新软件源
-      run: cd openwrt && ./scripts/feeds update -a
+        echo "第三方 Dockerman 替换完成，旧版已彻底清理"
 
     - name: 安装软件源
       run: cd openwrt && ./scripts/feeds install -a
+
+    # 【开机网络修复】调整Docker启动顺序，防火墙零重复
+    - name: 集成Docker开机网络修复（调启动序方案，零重复）
+      run: |
+        # 首次开机自动调整dockerd启动优先级，确保防火墙完全就绪后再启动
+        mkdir -p files/etc/uci-defaults
+        cat > files/etc/uci-defaults/99-fix-docker-start << 'EOF'
+        #!/bin/sh
+        # 将dockerd启动优先级设为99，晚于防火墙初始化，避免规则被清空
+        sed -i 's/^START=.*/START=99/' /etc/init.d/dockerd
+        # 重新生效启动顺序
+        /etc/init.d/dockerd disable
+        /etc/init.d/dockerd enable
+        exit 0
+        EOF
+        chmod +x files/etc/uci-defaults/99-fix-docker-start
+        echo "Docker开机网络修复集成完成"
 
     - name: 加载自定义配置
       run: |
