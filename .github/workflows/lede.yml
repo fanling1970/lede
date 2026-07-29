@@ -138,7 +138,7 @@ jobs:
         df -hT $PWD
         echo "克隆 LEDE 源码..."
         git clone $REPO_URL openwrt
-        git -C openwrt checkout aa71d6a
+        git -C openwrt checkout de1795d
         echo "✅ 源码克隆完成"
 
     - name: 加载自定义软件源
