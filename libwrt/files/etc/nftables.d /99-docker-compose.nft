@@ -1,0 +1,1 @@
+insert rule inet fw4 forward iifname "br-lan" oifname "br-*" accept
