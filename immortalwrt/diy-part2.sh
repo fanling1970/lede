@@ -123,4 +123,11 @@ sed -i '/CONFIG_PACKAGE_shadowsocks-rust/d' .config
 echo "# CONFIG_PACKAGE_shadowsocks-rust is not set" >> .config
 rm -rf feeds/packages/net/shadowsocks-rust
 
+# 写入 Docker Compose 网桥放行规则到 base-files（编译时自动打包进固件）
+mkdir -p package/base-files/files/etc/nftables.d
+cat > package/base-files/files/etc/nftables.d/99-docker-compose.nft << 'EOF'
+insert rule inet fw4 forward iifname "br-lan" oifname "br-*" accept
+EOF
+chmod 644 package/base-files/files/etc/nftables.d/99-docker-compose.nft
+
 echo "=== diy-part2.sh 执行完成==="
