@@ -156,10 +156,19 @@ exit 0
 EOF
 chmod 755 package/base-files/files/etc/uci-defaults/99-docker-data
 
-# 守护：每次启动确保 docker zone 包含 br-*
+# ===== 守护：每次启动确保 docker zone 包含 br-* =====
+# 删除默认的 exit 0，保证追加内容能被执行
+touch package/base-files/files/etc/rc.local
+sed -i '/^exit 0$/d' package/base-files/files/etc/rc.local
+# 追加守护逻辑（轮询等待 docker zone 出现，最多等 60 秒）
 cat >> package/base-files/files/etc/rc.local << 'EOF'
 
-# 确保 Docker Compose 自定义网桥被 fw4 放行（幂等，LuCI 清了也会自动补回）
+# 确保 Docker Compose 自定义网桥被 fw4 放行（幂等，每次启动自动补回）
+for i in $(seq 1 60); do
+    uci get firewall.docker >/dev/null 2>&1 && break
+    sleep 1
+done
+
 if uci get firewall.docker >/dev/null 2>&1; then
     if ! uci get firewall.docker.device 2>/dev/null | grep -Fq 'br-*'; then
         uci add_list firewall.docker.device='br-*'
@@ -167,6 +176,8 @@ if uci get firewall.docker >/dev/null 2>&1; then
         /etc/init.d/firewall restart
     fi
 fi
+
+exit 0
 EOF
 
 echo "✅ [DIY-P2] 所有配置完成"
