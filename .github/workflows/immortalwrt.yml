@@ -186,23 +186,6 @@ jobs:
       - name: 安装软件源
         run: cd openwrt && ./scripts/feeds install -a
 
-      # ============新增修复步骤：屏蔽nas‑packages带入的不兼容RAID内核模块===========
-      - name: 屏蔽nas源自动拉入的md‑raid内核模块（适配kernel6.18，解决md-mod.ko缺失报错）
-        run: |
-          cd openwrt
-          # feeds install之后，先执行defconfig让依赖写入.config
-          make defconfig
-          # 强制将冲突kmod置为n，保留luci‑app‑quickstart界面包
-          sed -i 's/CONFIG_PACKAGE_kmod-md-mod=y/CONFIG_PACKAGE_kmod-md-mod=n/' .config
-          sed -i 's/CONFIG_PACKAGE_kmod-md-raid0=y/CONFIG_PACKAGE_kmod-md-raid0=n/' .config
-          sed -i 's/CONFIG_PACKAGE_kmod-md-raid1=y/CONFIG_PACKAGE_kmod-md-raid1=n/' .config
-          sed -i 's/CONFIG_PACKAGE_kmod-md-raid10=y/CONFIG_PACKAGE_kmod-md-raid10=n/' .config
-          sed -i 's/CONFIG_PACKAGE_kmod-crypto-sha3=y/CONFIG_PACKAGE_kmod-crypto-sha3=n/' .config
-          echo "===== 处理后检查 ====="
-          grep -E "kmod-md|kmod-crypto-sha3" .config || true
-          echo "已完成屏蔽md‑raid系列kmod，不影响luci‑app‑quickstart/iStore/ddnsto功能"
-      # =============================================================================
-
       - name: 加载自定义配置
         run: |
           [ -e files ] && mv files openwrt/files
