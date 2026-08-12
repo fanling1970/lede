@@ -10,6 +10,21 @@
 # See /LICENSE for more information.
 #
 
+# Uncomment a feed source
+#sed -i 's/^#\(.*helloworld\)/\1/' feeds.conf.default
+
+# Add a feed source
+# echo 'src-git helloworld https://github.com/fw876/helloworld.git' >>feeds.conf.default
+# echo 'src-git passwall https://github.com/xiaorouji/openwrt-passwall.git' >>feeds.conf.default
+# echo 'src-git passwall2 https://github.com/xiaorouji/openwrt-passwall2.git' >>feeds.conf.default
+# echo "src-git nikki https://github.com/nikkinikki-org/OpenWrt-nikki.git;main" >> "feeds.conf.default"
+# echo "src-git neko https://github.com/nosignals/openwrt-neko.git;dev" >> "feeds.conf.default"
+# echo "src-git nekobox https://github.com/Thaolga/openwrt-nekobox.git;main" >> "feeds.conf.default"
+# echo "src-git mosdns https://github.com/sbwml/luci-app-mosdns.git;v5" >> "feeds.conf.default"
+# echo "src-git openclash https://github.com/vernesong/OpenClash.git;dev" >> "feeds.conf.default"
+# echo 'src-git nas https://github.com/linkease/nas-packages.git;master' >> feeds.conf.default
+# echo 'src-git nas_luci https://github.com/linkease/nas-packages-luci.git;main' >> feeds.conf.default
+
 # ======================================
 # Docker 自动化配置 - 固化启动脚本
 # ======================================
@@ -42,7 +57,7 @@ boot() {
 EOF
 chmod +x files/etc/init.d/docker-mount
 
-# 2. 创建 daemon.json 模板（编译时固化）
+# 2. 创建 daemon.json 模板（编译时固化，控制网段）
 mkdir -p files/etc/docker
 cat > files/etc/docker/daemon.json << 'EOF'
 {
@@ -59,18 +74,46 @@ cat > files/etc/docker/daemon.json << 'EOF'
 }
 EOF
 
-# 3. 创建 Hotplug 脚本：Docker 启动时自动重载防火墙（解决首次启动无 docker 区域问题）
+# 3. 【关键】Docker 防火墙兜底：防止重启后出现多个 docker zone
+# 逻辑：让 Docker 自己生成 zone，我们只负责“多了就删”
 mkdir -p files/etc/hotplug.d/docker
-cat > files/etc/hotplug.d/docker/00-reload-firewall << 'EOF'
+cat > files/etc/hotplug.d/docker/00-firewall-dedup << 'EOF'
 #!/bin/sh
-# 当 Docker 服务状态改变时触发
-[ "$ACTION" = "start" ] && {
-    logger -t "docker-hotplug" "Docker started, reloading firewall..."
-    # 短暂延迟确保 docker0 网卡已创建
-    sleep 2
+
+# 只在 Docker 服务启动时执行
+[ "$ACTION" = "start" ] || exit 0
+
+# 等 Docker 完全建立 docker0 / br-*
+sleep 2
+
+DOCKER_ZONES=$(uci show firewall | grep "option name='docker'" | wc -l)
+
+if [ "$DOCKER_ZONES" -gt 1 ]; then
+    echo "检测到 $DOCKER_ZONES 个 docker zone，正在清理..."
+
+    # 保留第一个 docker zone，删除其余的
+    FIRST=$(uci show firewall | grep "option name='docker'" | head -n1 | cut -d'[' -f2 | cut -d']' -f1)
+
+    uci show firewall | grep "option name='docker'" | tail -n +2 | while read line; do
+        SEC=$(echo "$line" | cut -d'[' -f2 | cut -d']' -f1)
+        uci delete firewall.@zone[$SEC]
+    done
+
+    uci commit firewall
     /etc/init.d/firewall reload
-}
+    echo "docker zone 已清理，仅保留一个"
+else
+    echo "docker zone 数量正常（$DOCKER_ZONES），无需处理"
+fi
+
+# 确保 docker0 / br-+ 在 device 列表中（防止 Compose 网络被墙）
+ZONE=$(uci show firewall | grep "option name='docker'" | head -n1 | cut -d'.' -f2 | cut -d'=' -f1)
+uci del_list firewall.$ZONE.device='docker0' 2>/dev/null
+uci del_list firewall.$ZONE.device='br-+' 2>/dev/null
+uci add_list firewall.$ZONE.device='docker0'
+uci add_list firewall.$ZONE.device='br-+'
+uci commit firewall
 EOF
-chmod +x files/etc/hotplug.d/docker/00-reload-firewall
+chmod +x files/etc/hotplug.d/docker/00-firewall-dedup
 
 echo "✅ Docker 固化脚本植入完成"
