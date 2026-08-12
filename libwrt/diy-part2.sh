@@ -140,56 +140,33 @@ else
     echo "⚠️ 源码自带 OpenClash 不存在，将在下次编译时恢复"
 fi
 
-# ===== 刷机自动配置：磁盘挂载 + Docker 根目录迁移 + 网桥放行 =====
-mkdir -p package/base-files/files/etc/uci-defaults
+# ===== 新增：Docker 配置（直接追加在后面即可） =====
 
-# 脚本1（99 后缀，执行顺序靠后）：配置挂载和 Docker 根目录，第一次启动生效
+# 脚本1：修改 Docker 根目录到挂载盘
 cat > package/base-files/files/etc/uci-defaults/99-docker-data << 'EOF'
 #!/bin/sh
-MOUNT_POINT="/mnt/mmcblk0p27"
-DISK_UUID="1a99b9cc-fa4a-4f08-a4e0-5523f260d532"
-
-# 1. 写入 fstab，开机自动挂载磁盘
-uci -q delete fstab.mmcblk0p27
-uci set fstab.mmcblk0p27=mount
-uci set fstab.mmcblk0p27.uuid="$DISK_UUID"
-uci set fstab.mmcblk0p27.target="$MOUNT_POINT"
-uci set fstab.mmcblk0p27.enabled='1'
-uci commit fstab
-
-# 2. 立即尝试挂载（失败也没关系，重启后 fstab 会自动挂载）
-mkdir -p "$MOUNT_POINT"
-block mount 2>/dev/null || mount /dev/mmcblk0p27 "$MOUNT_POINT" 2>/dev/null || true
-
-# 3. 创建 Docker 数据目录
-mkdir -p "$MOUNT_POINT/docker"
-
-# 4. 修改 Docker 根目录到挂载盘
+mkdir -p /mnt/mmcblk0p27/docker
 if uci get dockerd.globals >/dev/null 2>&1; then
-    uci set dockerd.globals.data_root="$MOUNT_POINT/docker"
+    uci set dockerd.globals.data_root="/mnt/mmcblk0p27/docker"
 else
-    uci set dockerd.@globals[0].data_root="$MOUNT_POINT/docker"
+    uci set dockerd.@globals[0].data_root="/mnt/mmcblk0p27/docker"
 fi
 uci commit dockerd
-
 exit 0
 EOF
 chmod 755 package/base-files/files/etc/uci-defaults/99-docker-data
 
-# 脚本2（98 后缀，执行顺序靠前）：等 docker zone 出现后添加 br-*，成功前每次启动重试
-cat > package/base-files/files/etc/uci-defaults/98-docker-bridge << 'EOF'
-#!/bin/sh
-# docker zone 还没出现 → 脚本保留，下次启动重试
-uci get firewall.docker >/dev/null 2>&1 || exit 1
+# 守护：每次启动确保 docker zone 包含 br-*
+cat >> package/base-files/files/etc/rc.local << 'EOF'
 
-# 幂等添加 br-*，避免重复
-if ! uci get firewall.docker.device 2>/dev/null | grep -Fq 'br-*'; then
-    uci add_list firewall.docker.device='br-*'
-    uci commit firewall
+# 确保 Docker Compose 自定义网桥被 fw4 放行（幂等，LuCI 清了也会自动补回）
+if uci get firewall.docker >/dev/null 2>&1; then
+    if ! uci get firewall.docker.device 2>/dev/null | grep -Fq 'br-*'; then
+        uci add_list firewall.docker.device='br-*'
+        uci commit firewall
+        /etc/init.d/firewall restart
+    fi
 fi
-exit 0
 EOF
-chmod 755 package/base-files/files/etc/uci-defaults/98-docker-bridge
-
 
 echo "✅ [DIY-P2] 所有配置完成"
