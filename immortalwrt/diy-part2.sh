@@ -123,11 +123,64 @@ sed -i '/CONFIG_PACKAGE_shadowsocks-rust/d' .config
 echo "# CONFIG_PACKAGE_shadowsocks-rust is not set" >> .config
 rm -rf feeds/packages/net/shadowsocks-rust
 
-# 写入 Docker Compose 网桥放行规则到 base-files（编译时自动打包进固件）
-mkdir -p package/base-files/files/etc/nftables.d
-cat > package/base-files/files/etc/nftables.d/99-docker-compose.nft << 'EOF'
-insert rule inet fw4 forward iifname "br-lan" oifname "br-*" accept
-EOF
-chmod 644 package/base-files/files/etc/nftables.d/99-docker-compose.nft
+# ======================================
+# Docker 自动化配置 - 首次开机执行
+# ======================================
+echo "--- 配置 Docker 首次启动脚本 ---"
+mkdir -p package/base-files/files/etc/uci-defaults
+
+cat > package/base-files/files/etc/uci-defaults/99-custom-docker << 'DOCKEREOF'
+#!/bin/sh
+
+# 1. 启用自动挂载服务
+/etc/init.d/docker-mount enable
+
+# 2. 配置 dockerd (UCI方式)
+uci set dockerd.globals.alt_config_file='/etc/docker/daemon.json'
+uci set dockerd.globals.data_root='/mnt/mmcblk0p27/docker/'
+uci set dockerd.globals.log_level='warn'
+uci set dockerd.globals.iptables='1'
+uci set dockerd.globals.auto_start='1'
+uci add_list dockerd.globals.registry_mirrors='https://registry.linkease.net:5443'
+uci commit dockerd
+
+# 3. 固化防火墙规则 (关键：解决 br-+ 和 docker0 问题)
+# 先确保 docker zone 存在
+if ! uci get firewall.docker >/dev/null 2>&1; then
+    uci add firewall zone
+    uci set firewall.@zone[-1].name='docker'
+    uci set firewall.@zone[-1].input='ACCEPT'
+    uci set firewall.@zone[-1].output='ACCEPT'
+    uci set firewall.@zone[-1].forward='ACCEPT'
+    uci set firewall.@zone[-1].masq='1'
+    uci set firewall.@zone[-1].mtu_fix='1'
+fi
+
+# 添加设备通配符 (防止 compose 网络被墙)
+uci del_list firewall.@zone[-1].device='docker0' 2>/dev/null
+uci del_list firewall.@zone[-1].device='br-+' 2>/dev/null
+uci add_list firewall.@zone[-1].device='docker0'
+uci add_list firewall.@zone[-1].device='br-+'
+
+# 允许 LAN -> Docker 访问
+uci add firewall forwarding
+uci set firewall.@forwarding[-1].src='lan'
+uci set firewall.@forwarding[-1].dest='docker'
+
+# 允许 Docker -> WAN 访问
+uci add firewall forwarding
+uci set firewall.@forwarding[-1].src='docker'
+uci set firewall.@forwarding[-1].dest='wan'
+
+uci commit firewall
+
+# 4. 创建 Docker 数据目录 (如果挂载脚本还没来得及创建)
+mkdir -p /mnt/mmcblk0p27/docker
+
+echo "Docker 初始化配置完成" > /tmp/docker-init.log
+DOCKEREOF
+
+chmod +x package/base-files/files/etc/uci-defaults/99-custom-docker
+echo "✅ Docker 首次启动配置已添加"
 
 echo "=== diy-part2.sh 执行完成==="
