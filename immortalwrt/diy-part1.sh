@@ -1,13 +1,28 @@
+# ==========================================================
+# Docker 全量固化配置（编译后自动生效，无需手动操作）
+# ==========================================================
+
 # ------------------------------
-# 1. Docker 根目录固化（启动自动修正+兜底，适配刷机场景）
+# 1. Docker 根目录自动修正脚本（启动顺序晚于挂载，兜底容错）
 # ------------------------------
 echo "--- 固化 Docker 根目录自动修正脚本 ---"
 mkdir -p files/etc/rc.d
-cat > files/etc/rc.d/S19docker-link << 'EOF'
+cat > files/etc/rc.d/S21docker-link << 'EOF'
 #!/bin/sh /etc/rc.common
-START=19  # 比 dockerd（99）早启动，确保软链接先就绪
+START=21  # 晚于自动挂载服务blockd（START=20），确保挂载完成
 boot() {
-    # 1. 检查外置存储是否已自动挂载（你的老固件已经支持自动挂载，这里做容错）
+    # 等待外置存储挂载，最多等10秒（兜底极端情况）
+    local i
+    for i in $(seq 1 10); do
+        if [ -d "/mnt/mmcblk0p27" ]; then
+            logger -t docker-link "检测到 /mnt/mmcblk0p27 已挂载"
+            break
+        fi
+        logger -t docker-link "等待 /mnt/mmcblk0p27 挂载，第 ${i} 秒"
+        sleep 1
+    done
+
+    # 1. 检查外置存储是否已自动挂载
     if [ ! -d "/mnt/mmcblk0p27" ]; then
         logger -t docker-link "错误：/mnt/mmcblk0p27 未挂载，Docker 将使用默认目录"
         return 1
@@ -56,9 +71,22 @@ boot() {
     fi
 }
 EOF
-chmod +x files/etc/rc.d/S19docker-link
+chmod +x files/etc/rc.d/S21docker-link
 
-# 固化 Docker 配置
+# ------------------------------
+# 2. 固化 Docker 服务配置（锁定使用我们写的 daemon.json，不用临时配置）
+# ------------------------------
+echo "--- 固化 Docker 服务配置 ---"
+mkdir -p files/etc/config
+cat > files/etc/config/dockerd << 'EOF'
+config globals 'globals'
+    option alt_config_file '/etc/docker/daemon.json'
+EOF
+
+# ------------------------------
+# 3. 固化 Docker 运行配置（网段、镜像源、根目录）
+# ------------------------------
+echo "--- 固化 Docker 运行配置 ---"
 mkdir -p files/etc/docker
 cat > files/etc/docker/daemon.json << 'EOF'
 {
@@ -71,8 +99,27 @@ cat > files/etc/docker/daemon.json << 'EOF'
 }
 EOF
 
-# 固化防火墙配置
-uci -q delete firewall.docker.network
-uci add_list firewall.docker.device='docker0'
-uci add_list firewall.docker.device='br-+'
+# ------------------------------
+# 4. 固化防火墙配置（直接写配置文件，不用 uci 命令）
+# ------------------------------
+echo "--- 固化 Docker 防火墙配置 ---"
+mkdir -p files/etc/config
+cat >> files/etc/config/firewall << 'EOF'
 
+# ========== 固化Docker防火墙配置（自动放行Compose网桥） ==========
+config zone 'docker'
+    option name 'docker'
+    option input 'ACCEPT'
+    option output 'ACCEPT'
+    option forward 'ACCEPT'
+    list device 'docker0'
+    list device 'br-+'
+
+config forwarding
+    option src 'lan'
+    option dest 'docker'
+
+config forwarding
+    option src 'docker'
+    option dest 'wan'
+EOF
