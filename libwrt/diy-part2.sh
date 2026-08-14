@@ -32,23 +32,22 @@ echo "✅ Athena LED 插件克隆完成"
 # ======================================
 echo "--- 修改基础系统设置 ---"
 
-# 修改主机名
-sed -i "s/hostname='.*'/hostname='LibWrt'/g" package/base-files/files/bin/config_generate
+# 查找 LibWrt 源码中 default-settings 的实际位置
+DEFAULT_SETTINGS=$(find package -path "*default-settings*" -name "99-*" -type f 2>/dev/null | head -1)
 
-# 修改版本描述
-sed -i "s/DISTRIB_DESCRIPTION='*.*'/DISTRIB_DESCRIPTION='OpenWrt-$(date +%Y%m%d)'/g" package/lean/default-settings/files/zzz-default-settings   
-sed -i "s/DISTRIB_REVISION='*.*'/DISTRIB_REVISION=' By J.Y'/g" package/lean/default-settings/files/zzz-default-settings
-
-# 修改默认网关 IP
-sed -i 's/192.168.1.1/192.168.100.1/g' package/base-files/files/bin/config_generate
-
-# 清除默认密码
-sed -i '/V4UetPzk$CYXluq4wUazHjmCDBCqXF/d' package/lean/default-settings/files/zzz-default-settings
-
-# 添加 iStore 频道信息（优化：防止上游更新导致行号错位）
-if ! grep -q "istore.channel" package/lean/default-settings/files/zzz-default-settings; then
-    sed -i "/^uci commit istore/i uci set istore.istore.channel='OpenWrt'" \
-        package/lean/default-settings/files/zzz-default-settings
+if [ -n "$DEFAULT_SETTINGS" ]; then
+    echo "找到 default-settings: $DEFAULT_SETTINGS"
+    # 修改版本描述
+    sed -i "s/DISTRIB_DESCRIPTION=.*/DISTRIB_DESCRIPTION='OpenWrt-$(date +%Y%m%d)'/g" "$DEFAULT_SETTINGS"
+    sed -i "s/DISTRIB_REVISION=.*/DISTRIB_REVISION=' By J.Y'/g" "$DEFAULT_SETTINGS"
+    # 清除默认密码
+    sed -i '/V4UetPzk\$CYXluq4wUazHjmCDBCqXF/d' "$DEFAULT_SETTINGS"
+    # 添加 iStore 频道信息（优化：防止上游更新导致行号错位）
+    if ! grep -q "istore.channel" "$DEFAULT_SETTINGS"; then
+        sed -i "/^uci commit istore/i uci set istore.istore.channel='OpenWrt'" "$DEFAULT_SETTINGS"
+    fi
+else
+    echo "⚠️ 未找到 default-settings 文件，跳过系统描述/密码/iStore频道设置"
 fi
 
 echo "✅ 基础系统设置修改完成"
