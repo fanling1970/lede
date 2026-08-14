@@ -142,7 +142,6 @@ fi
 
 # ===== Docker 自动配置 =====
 mkdir -p package/base-files/files/etc/uci-defaults
-mkdir -p package/base-files/files/etc/nftables.d
 
 # 1. 修改 Docker 根目录到挂载盘（第一次启动生效，执行后自删除）
 cat > package/base-files/files/etc/uci-defaults/99-docker-data << 'EOF'
@@ -154,13 +153,29 @@ else
     uci set dockerd.@globals[0].data_root="/mnt/mmcblk0p27/docker"
 fi
 uci commit dockerd
+/etc/init.d/cron enable 2>/dev/null
 exit 0
 EOF
 chmod 755 package/base-files/files/etc/uci-defaults/99-docker-data
 
-# 2. 放行 LAN → Docker 网段（fw4 原生加载，无定时任务、无重启动作）
-cat > package/base-files/files/etc/nftables.d/99-docker-compose.nft << 'EOF'
-insert rule inet fw4 forward iifname "br-lan" ip daddr 172.16.0.0/12 accept
+# 2. Compose 网桥放行：cron 自愈（UCI 方式，fw4 原生生成规则，已验证稳定）
+mkdir -p package/base-files/files/etc
+cat > package/base-files/files/etc/docker-bridge-fix.sh << 'EOF'
+#!/bin/sh
+# 确保 Docker Compose 自定义网桥被 fw4 放行（幂等，无副作用）
+uci get firewall.docker >/dev/null 2>&1 || exit 0
+if ! uci get firewall.docker.device 2>/dev/null | grep -Fq 'br-*'; then
+    uci add_list firewall.docker.device='br-*'
+    uci commit firewall
+    /etc/init.d/firewall restart
+fi
+exit 0
+EOF
+chmod 755 package/base-files/files/etc/docker-bridge-fix.sh
+
+mkdir -p package/base-files/files/etc/crontabs
+cat >> package/base-files/files/etc/crontabs/root << 'EOF'
+*/1 * * * * /etc/docker-bridge-fix.sh
 EOF
 
 echo "✅ [DIY-P2] 所有配置完成"
