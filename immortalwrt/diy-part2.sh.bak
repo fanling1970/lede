@@ -127,3 +127,24 @@ echo "# CONFIG_PACKAGE_shadowsocks-rust is not set" >> .config
 # 可选：直接删除源码目录，100%不会被编译
 rm -rf feeds/packages/net/shadowsocks-rust
 
+# ======================================
+# Dockerman：使用 lisaac 的 Lua 经典版
+# ======================================
+echo "--- 配置 Lua 版 Dockerman ---"
+
+# 确保官方 JS 版 dockerman 没被勾选
+sed -i 's/^CONFIG_PACKAGE_luci-app-dockerman=y/# CONFIG_PACKAGE_luci-app-dockerman is not set/g' .config
+sed -i '/CONFIG_PACKAGE_luci-app-dockerman/d' .config
+
+# 勾选 lisaac 的 Lua 版 dockerman 及其依赖
+cat >> .config << 'DOCKEREOF'
+CONFIG_PACKAGE_luci-app-dockerman=y
+CONFIG_PACKAGE_luci-lib-docker=y
+CONFIG_PACKAGE_dockerd=y
+CONFIG_PACKAGE_docker-compose=y
+CONFIG_PACKAGE_ttyd=y
+DOCKEREOF
+
+echo "✅ Lua 版 Dockerman 已配置"
+
+echo "=== diy-part2.sh 执行完成==="
