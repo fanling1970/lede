@@ -1,4 +1,4 @@
-name: libwrt 手动固件编译
+name: libwrt 手动固件编译干净版
 # 仅手动触发，无自动编译规则
 on:
   workflow_dispatch:
