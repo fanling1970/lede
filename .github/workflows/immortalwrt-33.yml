@@ -11,7 +11,7 @@
 # 新增：Rust环境彻底清理，修复shadowsocks-rust编译报错
 # 修正：全文件YAML缩进规范，消除解析错误
 
-name: immortalwrt
+name: immortalwrt带温度补丁
 
 # 禁用自动触发，仅保留手动触发
 on:
