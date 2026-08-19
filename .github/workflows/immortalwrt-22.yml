@@ -1,0 +1,123 @@
+name: ImmortalWrt 手动固件编译【融合优化版】
+on:
+  workflow_dispatch:
+    inputs:
+      TARGET_PROFILE:
+        description: 编译机型名称
+        required: true
+        default: jdc_ax6600
+      COMPILE_THREAD:
+        description: 编译线程数
+        required: true
+        default: "4"
+      SAVE_LOG:
+        description: 是否保存完整编译日志
+        type: boolean
+        default: true
+
+jobs:
+  build_firmware:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: 磁盘空间最大化（仅这一个磁盘优化，去掉重型optimizer）
+        uses: easimon/maximize-build-space@master
+        with:
+          root-reserve-mb: 2048
+          swap-size-mb: 1024
+          remove-dotnet: 'true'
+          remove-android: 'true'
+          remove-haskell: 'true'
+          remove-codeql: 'true'
+          remove-docker-images: 'true'
+
+      - name: 1. 拉取当前仓库全部文件
+        uses: actions/checkout@v4
+
+      - name: 磁盘空间检查
+        run: df -hT
+
+      - name: 2. 安装Ubuntu精简编译依赖
+        run: |
+          sudo apt update
+          sudo apt install -y build-essential libncurses-dev gawk flex bison qemu-utils git wget unzip libssl-dev python3 python3-pip time rsync curl
+          sudo apt autoremove -y
+          sudo apt clean
+
+      - name: 3. 克隆 ImmortalWrt 源码
+        run: |
+          git clone https://github.com/VIKINGYFY/immortalwrt.git openwrt
+          cd openwrt
+          git pull
+
+      - name: 4. 覆盖自定义 feeds.conf.default
+        run: cp -v ./immortalwrt/feeds.conf.default ./openwrt/feeds.conf.default
+
+      - name: 5. 执行前置自定义脚本 diy-part1.sh
+        run: |
+          chmod +x ../immortalwrt/diy-part1.sh
+          ../immortalwrt/diy-part1.sh
+        working-directory: ./openwrt
+
+      - name: 6. 更新并安装全部软件源 feeds
+        run: |
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+        working-directory: ./openwrt
+
+      - name: 7. 导入自定义编译配置 info.config
+        run: cp -v ./immortalwrt/info.config ./openwrt/.config
+
+      - name: 8. 执行后置自定义脚本 diy-part2.sh
+        run: |
+          chmod +x ../immortalwrt/diy-part2.sh
+          ../immortalwrt/diy-part2.sh
+        working-directory: ./openwrt
+
+      - name: 9. 预编译生成完整配置
+        run: make defconfig
+        working-directory: ./openwrt
+
+      - name: 10. 下载编译依赖源码包
+        run: make download -j${{ github.event.inputs.COMPILE_THREAD }}
+        working-directory: ./openwrt
+
+      - name: 11. 开始编译固件【高线程失败自动降级单线程】
+        id: compile_task
+        run: |
+          make -j${{ github.event.inputs.COMPILE_THREAD }} 2>&1 | tee compile_log.txt || {
+            echo "==================== 高线程编译出错，降级单线程重试 V=s ===================="
+            make -j1 V=s 2>&1 | tee -a compile_log.txt
+          }
+        working-directory: ./openwrt
+
+      - name: 12. 打包编译日志（成功/失败均保留）
+        if: ${{ github.event.inputs.SAVE_LOG == true || failure() }}
+        run: tar -zcvf compile_log.tar.gz ./openwrt/compile_log.txt
+
+      - name: 13. 上传编译日志产物
+        if: ${{ github.event.inputs.SAVE_LOG == true || failure() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: 编译完整日志
+          path: compile_log.tar.gz
+          retention-days: 7
+
+      - name: 固件目录校验（查看是否生成bin）
+        if: success()
+        run: ls -l openwrt/bin/targets/qualcommax/ipq60xx/
+
+      - name: 14. 上传全新刷机factory固件
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ImmortalWrt_JDC_AX6600_全新刷机_factory
+          path: openwrt/bin/targets/qualcommax/ipq60xx/*factory.bin
+          retention-days: 15
+
+      - name: 15. 上传后台升级sysupgrade固件
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ImmortalWrt_JDC_AX6600_在线升级_sysupgrade
+          path: openwrt/bin/targets/qualcommax/ipq60xx/*sysupgrade.bin
+          retention-days: 15
