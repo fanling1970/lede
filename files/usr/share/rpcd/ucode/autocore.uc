@@ -25,121 +25,56 @@ function get_cpu_temp() {
 			return Math.round(t / 1000);
 	}
 
-	let dir = new Directory("/sys/class/thermal");
-	for (let entry of dir) {
-		if (!entry.name.startsWith("thermal_zone"))
+	/* 保留原有逻辑做兜底，兼容其他平台 */
+	let dir = new Dir("/sys/class/thermal");
+	for (let ent of dir) {
+		if (!ent.name.startsWith("thermal_zone"))
 			continue;
 
-		let type = read_file("/sys/class/thermal/" + entry.name + "/type");
-		if (type && type.toLowerCase().indexOf("cpu") !== -1) {
-			let temp = read_file("/sys/class/thermal/" + entry.name + "/temp");
-			if (temp) {
-				let t = Number(temp);
-				if (t > 0)
-					return Math.round(t / 1000);
-			}
-		}
-	}
+		let type = read_file("/sys/class/thermal/" + ent.name + "/type");
+		if (!type || !type.includes("cpu"))
+			continue;
 
-	/* fallback hwmon */
-	dir = new Directory("/sys/class/hwmon");
-	for (let entry of dir) {
-		let name = read_file("/sys/class/hwmon/" + entry.name + "/name");
-		if (!name) continue;
-		name = name.toLowerCase();
-		if (name.indexOf("tsens") !== -1 || name.indexOf("cpu") !== -1 || name.indexOf("soc") !== -1) {
-			let temp = read_file("/sys/class/hwmon/" + entry.name + "/temp1_input");
-			if (temp) {
-				let t = Number(temp);
-				if (t > 0)
-					return Math.round(t / 1000);
-			}
-		}
+		let raw = read_file("/sys/class/thermal/" + ent.name + "/temp");
+		if (!raw) continue;
+		let t = Number(raw);
+		if (t > 0)
+			return Math.round(t / 1000);
 	}
 	return null;
 }
 
-function get_cpuinfo() {
-	let cpuinfo = read_file("/proc/cpuinfo");
-	if (!cpuinfo)
-		return null;
+function get_cpu_usage() {
+	let s = read_file("/proc/stat");
+	if (!s) return null;
+	let m = s.match(/^cpu\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)/);
+	if (!m) return null;
+	let user = Number(m[1]), nice = Number(m[2]), system = Number(m[3]), idle = Number(m[4]);
+	let total = user + nice + system + idle;
+	return { user, nice, system, idle, total };
+}
 
-	let ret = {
-		model: null,
-		cores: 0,
-		freq: 0
-	};
-
-	let lines = cpuinfo.split('\n');
-	for (let line of lines) {
-		if (line.startsWith('model name') || line.startsWith('Processor')) {
-			let m = line.split(':');
-			if (m.length > 1)
-				ret.model = m[1].trim();
-		}
-		if (line.startsWith('processor'))
-			ret.cores += 1;
+function get_mem_info() {
+	let s = read_file("/proc/meminfo");
+	if (!s) return null;
+	let mem = {};
+	for (let line of s.split("\n")) {
+		let kv = line.match(/^(.+?):\s*(\d+)/);
+		if (!kv) continue;
+		mem[kv[1]] = Number(kv[2]) * 1024;
 	}
-
-	/* cpu freq */
-	let f = read_file("/sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq");
-	if (f)
-		ret.freq = Math.round(Number(f)/1000);
-
-	return ret;
+	let total = mem.MemTotal;
+	let free = mem.MemFree + mem.Buffers + mem.Cached;
+	let used = total - free;
+	return { total, used };
 }
 
-function get_loadavg() {
-	let la = read_file("/proc/loadavg");
-	if (!la) return null;
-	let arr = la.split(/\s+/);
-	return {
-		load1: Number(arr[0]),
-		load5: Number(arr[1]),
-		load15: Number(arr[2])
-	};
+function main() {
+	let rv = {};
+	rv.cpu_temp = get_cpu_temp();
+	rv.cpu_usage = get_cpu_usage();
+	rv.mem_info = get_mem_info();
+	return rv;
 }
 
-function get_meminfo() {
-	let raw = read_file("/proc/meminfo");
-	if (!raw) return null;
-	let mem = {};
-	raw.split('\n').forEach(function(line) {
-		let kv = line.split(':');
-		if (kv.length <2) return;
-		let k = kv[0].trim();
-		let v = parseInt(kv[1].trim());
-		mem[k] = v;
-	});
-	return {
-		total: mem.MemTotal * 1024,
-		free: mem.MemFree *1024,
-		buffers: mem.Buffers *1024,
-		cached: mem.Cached *1024
-	};
-}
-
-function get_swapinfo() {
-	let raw = read_file("/proc/meminfo");
-	if (!raw) return null;
-	let mem = {};
-	raw.split('\n').forEach(function(line) {
-		let kv = line.split(':');
-		if (kv.length <2) return;
-		let k = kv[0].trim();
-		let v = parseInt(kv[1].trim());
-		mem[k] = v;
-	});
-	return {
-		total: mem.SwapTotal *1024,
-		free: mem.SwapFree *1024
-	};
-}
-
-module.exports = {
-	get_cpu_temp: get_cpu_temp,
-	get_cpuinfo: get_cpuinfo,
-	get_loadavg: get_loadavg,
-	get_meminfo: get_meminfo,
-	get_swapinfo: get_swapinfo
-};
+print(JSON.stringify(main()));
