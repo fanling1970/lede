@@ -1,47 +1,33 @@
 #!/bin/bash
-#
-# Copyright (c) 2019-2020 P3TERX <https://p3terx.com>
-#
-# This is free software, licensed under the MIT License.
-# See /LICENSE for more information.
-#
-# https://github.com/P3TERX/Actions-OpenWrt
-# File name: diy-part2.sh
-# Description: OpenWrt DIY script part 2 (After Update feeds)
-#
-
-#!/bin/bash
 # diy-part2.sh（After Update feeds）
 
 echo "=== 开始 diy-part2.sh ==="
 
 # ======================================
-# 关键：强制使用 lisaac 的 Lua 版 Dockerman
+# 强制使用 OpenWrt 23.05 的 Lua 版 Dockerman
 # ======================================
-echo "--- 处理 Dockerman：强制使用 Lua 经典版 ---"
+echo "--- 处理 Dockerman：使用 OpenWrt 23.05 Lua 经典版 ---"
 
-# 1. 卸载官方 JS 版（如果存在）
+# 1. 卸载官方 JS 版
 ./scripts/feeds uninstall luci-app-dockerman 2>/dev/null || true
 
-# 2. 从 lisaac 源安装 Lua 版
-./scripts/feeds install -p dockerman luci-app-dockerman
+# 2. 从 23.05 分支安装 Lua 版
+./scripts/feeds install -p dockerman luci/applications/luci-app-dockerman
 
-# 3. 验证安装来源（调试用）
+# 3. 验证安装
 echo "--- 验证 dockerman 来源 ---"
-if [ -d "feeds/dockerman/luci-app-dockerman" ]; then
-    echo "✅ 已安装 lisaac 源的 Lua 版 Dockerman"
+if [ -d "package/feeds/dockerman/luci/applications/luci-app-dockerman" ]; then
+    echo "✅ 已安装 OpenWrt 23.05 的 Lua 版 Dockerman"
 else
-    echo "❌ 未找到 lisaac 源的 Dockerman，可能安装失败"
+    echo "❌ 安装失败，请检查日志"
 fi
 
-# 4. 清理 .config 中的冲突配置
+# 4. 清理并写入配置
 sed -i '/CONFIG_PACKAGE_luci-app-dockerman/d' .config
 sed -i '/CONFIG_PACKAGE_luci-lib-docker/d' .config
 
-# 5. 写入正确的配置
 cat >> .config << 'DOCKEREOF'
 CONFIG_PACKAGE_luci-app-dockerman=y
-CONFIG_PACKAGE_luci-lib-docker=y
 CONFIG_PACKAGE_dockerd=y
 CONFIG_PACKAGE_docker-compose=y
 CONFIG_PACKAGE_ttyd=y
@@ -49,10 +35,14 @@ DOCKEREOF
 
 echo "✅ Dockerman 配置已写入"
 
-# 修改 device 设备名称
+# ======================================
+# 其余原有配置（无线、Rust 等）
+# ======================================
+
+# 修改 hostname
 sed -i "s/hostname='.*'/hostname='immortalwrt'/g" package/base-files/files/bin/config_generate
 
-# 默认网关 ip 地址修改
+# 修改网关
 sed -i 's/192.168.1.1/192.168.100.1/g' package/base-files/files/bin/config_generate
 
 # ======================================
@@ -71,8 +61,8 @@ uci set wireless.radio0.disabled='0'
 uci set wireless.radio0.channel='149'
 uci set wireless.radio0.band='5g'
 uci set wireless.radio0.htmode='HE80'
-uci set wireless.radio0.country='CN'  # 添加地区代码
-uci set wireless.radio0.cell_density='0'  # 默认密度
+uci set wireless.radio0.country='CN'
+uci set wireless.radio0.cell_density='0'
 uci set wireless.default_radio0.ssid='JDC_AX6600_5G'
 uci set wireless.default_radio0.key='BUZHIDAOWA'
 uci set wireless.default_radio0.encryption='psk2'
@@ -102,14 +92,10 @@ uci set wireless.default_radio2.key='BUZHIDAOWA'
 uci set wireless.default_radio2.encryption='psk2'
 uci set wireless.default_radio2.network='lan'
 
-# 提交配置
 uci commit wireless
 
-# 验证配置
 echo "无线配置已应用：" > /tmp/wireless-setup.log
 uci show wireless | grep -E "(radio[0-9]\.(disabled|channel|band|htmode)|default_radio[0-9]\.ssid)" >> /tmp/wireless-setup.log
-
-# 设置正确的权限（可选但推荐）
 chmod 600 /etc/config/wireless 2>/dev/null
 
 exit 0
@@ -118,19 +104,29 @@ WIFIEOF
 chmod +x package/base-files/files/etc/uci-defaults/99-custom-wireless
 echo "✅ LEDE无线配置已移植"
 
-# 修复 jdCloud ax6600 无限重启
+# 修复重启补丁
 echo "--- 修复 jdCloud ax6600 无限重启 ---"
 rm -rf package/kernel/mac80211/patches/nss/ath11k/999-900-bss-transition-handling.patch
 echo "✅ 已删除可能导致重启的补丁"
 
-# 修复 rust 报错
+# 修复 Rust（修正 404 问题）
 echo "--- 修复 Rust 编译问题 ---"
-wget -O feeds/packages/lang/rust/Makefile https://raw.githubusercontent.com/aimetu/OpenWrt-Actions/refs/heads/main/patches/Makefile
-sed -i 's/--set=llvm\.download-ci-llvm=true/--set=llvm.download-ci-llvm=false/' feeds/packages/lang/rust/Makefile
-echo "✅ Rust Makefile 已更新"
+if [ -f "feeds/packages/lang/rust/Makefile" ]; then
+    # 使用正确的 URL（去掉 refs/heads）
+    wget -O feeds/packages/lang/rust/Makefile https://raw.githubusercontent.com/aimetu/OpenWrt-Actions/main/patches/Makefile 2>/dev/null || {
+        echo "⚠️ Rust Makefile 下载失败，使用现有文件"
+    }
+    if [ -f "feeds/packages/lang/rust/Makefile" ]; then
+        sed -i 's/--set=llvm\.download-ci-llvm=true/--set=llvm.download-ci-llvm=false/' feeds/packages/lang/rust/Makefile
+        echo "✅ Rust Makefile 已更新"
+    fi
+else
+    echo "⚠️ Rust Makefile 不存在，跳过"
+fi
 
-# 添加无线状态检查脚本（调试用）
+# 添加无线状态检查脚本（修复目录不存在问题）
 echo "--- 添加无线状态检查脚本 ---"
+mkdir -p package/base-files/files/usr/bin
 cat > package/base-files/files/usr/bin/wifi-status << 'STATUSEOF'
 #!/bin/sh
 echo "=== JDC_AX6600 无线状态检查 ==="
@@ -155,15 +151,12 @@ echo ""
 echo "4. 无线网络状态:"
 ifconfig | grep -A1 "wlan"
 STATUSEOF
-
 chmod +x package/base-files/files/usr/bin/wifi-status
 echo "✅ 无线状态检查脚本已添加"
 
-echo "=== diy-part2.sh 执行完成（基于已验证的LEDE配置）==="
-# 彻底屏蔽shadowsocks-rust独立包，避免意外编译报错
+# 屏蔽 shadowsocks-rust
 sed -i '/CONFIG_PACKAGE_shadowsocks-rust/d' .config
 echo "# CONFIG_PACKAGE_shadowsocks-rust is not set" >> .config
-# 可选：直接删除源码目录，100%不会被编译
 rm -rf feeds/packages/net/shadowsocks-rust
 
-echo "=== diy-part2.sh 执行完成==="
+echo "=== diy-part2.sh 执行完成 ==="
