@@ -1,50 +1,6 @@
 #!/bin/bash
 # diy-part2.sh
 
-echo "=== 开始 diy-part2.sh ==="
-
-# ======================================
-# 强制使用 lisaac 的 Lua 版 Dockerman
-# ======================================
-echo "--- 处理 Dockerman ---"
-
-# 1. 先卸载可能已经从官方 luci 装上的 JS 版
-./scripts/feeds uninstall luci-app-dockerman 2>/dev/null || true
-
-# 2. 从 lisaac 源安装（用包名，不是路径）
-./scripts/feeds install -p dockerman luci-app-dockerman
-
-# 3. 验证
-echo "--- 验证安装来源 ---"
-if [ -d "package/feeds/dockerman/luci-app-dockerman" ]; then
-    echo "✅ lisaac Lua 版已安装"
-    # 检查是否是 Lua 版（看有没有 luasrc 目录）
-    if [ -d "package/feeds/dockerman/luci-app-dockerman/luasrc" ]; then
-        echo "✅ 确认是 Lua 版（存在 luasrc 目录）"
-    else
-        echo "⚠️ 警告：安装的不是 Lua 版，可能没有 luasrc 目录"
-    fi
-else
-    echo "❌ 安装失败"
-fi
-
-# 4. 清理并写入配置
-sed -i '/CONFIG_PACKAGE_luci-app-dockerman/d' .config
-sed -i '/CONFIG_PACKAGE_luci-lib-docker/d' .config
-
-cat >> .config << 'DOCKEREOF'
-CONFIG_PACKAGE_luci-app-dockerman=y
-CONFIG_PACKAGE_dockerd=y
-CONFIG_PACKAGE_docker-compose=y
-CONFIG_PACKAGE_ttyd=y
-DOCKEREOF
-
-echo "✅ Dockerman 配置已写入"
-
-# ======================================
-# 其余原有配置（无线、Rust 等）
-# ======================================
-
 # 修改 hostname
 sed -i "s/hostname='.*'/hostname='immortalwrt'/g" package/base-files/files/bin/config_generate
 
