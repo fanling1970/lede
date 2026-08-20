@@ -1,25 +1,31 @@
 #!/bin/bash
-# diy-part2.sh（After Update feeds）
+# diy-part2.sh
 
 echo "=== 开始 diy-part2.sh ==="
 
 # ======================================
-# 强制使用 OpenWrt 23.05 的 Lua 版 Dockerman
+# 强制使用 lisaac 的 Lua 版 Dockerman
 # ======================================
-echo "--- 处理 Dockerman：使用 OpenWrt 23.05 Lua 经典版 ---"
+echo "--- 处理 Dockerman ---"
 
-# 1. 卸载官方 JS 版
+# 1. 先卸载可能已经从官方 luci 装上的 JS 版
 ./scripts/feeds uninstall luci-app-dockerman 2>/dev/null || true
 
-# 2. 从 23.05 分支安装 Lua 版
-./scripts/feeds install -p dockerman luci/applications/luci-app-dockerman
+# 2. 从 lisaac 源安装（用包名，不是路径）
+./scripts/feeds install -p dockerman luci-app-dockerman
 
-# 3. 验证安装
-echo "--- 验证 dockerman 来源 ---"
-if [ -d "package/feeds/dockerman/luci/applications/luci-app-dockerman" ]; then
-    echo "✅ 已安装 OpenWrt 23.05 的 Lua 版 Dockerman"
+# 3. 验证
+echo "--- 验证安装来源 ---"
+if [ -d "package/feeds/dockerman/luci-app-dockerman" ]; then
+    echo "✅ lisaac Lua 版已安装"
+    # 检查是否是 Lua 版（看有没有 luasrc 目录）
+    if [ -d "package/feeds/dockerman/luci-app-dockerman/luasrc" ]; then
+        echo "✅ 确认是 Lua 版（存在 luasrc 目录）"
+    else
+        echo "⚠️ 警告：安装的不是 Lua 版，可能没有 luasrc 目录"
+    fi
 else
-    echo "❌ 安装失败，请检查日志"
+    echo "❌ 安装失败"
 fi
 
 # 4. 清理并写入配置
