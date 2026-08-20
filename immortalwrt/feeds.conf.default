@@ -7,8 +7,7 @@ src-git video https://github.com/openwrt/video.git
 #src-git oldpackages http://git.openwrt.org/packages.git
 #src-link custom /usr/src/openwrt/custom-feed
 
-# 添加这一行（指定 23.05 分支）
-src-git dockerman https://github.com/openwrt/luci.git;openwrt-23.05
+src-git dockerman https://github.com/lisaac/luci-app-dockerman.git
 
 # 新增ssr插件源
 src-git helloworld https://github.com/fw876/helloworld
