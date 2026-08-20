@@ -1,4 +1,4 @@
-name: LEDE 手动固件编译【融合优化版】
+name: LEDE 手动固件编译【融合优化版】指定哈希值
 on:
   workflow_dispatch:
     inputs:
@@ -43,11 +43,11 @@ jobs:
           sudo apt autoremove -y
           sudo apt clean
 
-      - name: 3.克隆 coolsnowwolf/lede 并锁定 commit de1795d
+      - name: 3.克隆 coolsnowwolf/lede 并锁定 commit 2ee5dbe
         run: |
           git clone https://github.com/coolsnowwolf/lede.git openwrt
           cd openwrt
-          git checkout de1795d
+          git checkout 2ee5dbe
 
       - name: 4.覆盖自定义 feeds.conf.default
         run: cp -v ./lede/feeds.conf.default ./openwrt/feeds.conf.default
