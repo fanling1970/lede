@@ -10,6 +10,45 @@
 # Description: OpenWrt DIY script part 2 (After Update feeds)
 #
 
+#!/bin/bash
+# diy-part2.sh（After Update feeds）
+
+echo "=== 开始 diy-part2.sh ==="
+
+# ======================================
+# 关键：强制使用 lisaac 的 Lua 版 Dockerman
+# ======================================
+echo "--- 处理 Dockerman：强制使用 Lua 经典版 ---"
+
+# 1. 卸载官方 JS 版（如果存在）
+./scripts/feeds uninstall luci-app-dockerman 2>/dev/null || true
+
+# 2. 从 lisaac 源安装 Lua 版
+./scripts/feeds install -p dockerman luci-app-dockerman
+
+# 3. 验证安装来源（调试用）
+echo "--- 验证 dockerman 来源 ---"
+if [ -d "feeds/dockerman/luci-app-dockerman" ]; then
+    echo "✅ 已安装 lisaac 源的 Lua 版 Dockerman"
+else
+    echo "❌ 未找到 lisaac 源的 Dockerman，可能安装失败"
+fi
+
+# 4. 清理 .config 中的冲突配置
+sed -i '/CONFIG_PACKAGE_luci-app-dockerman/d' .config
+sed -i '/CONFIG_PACKAGE_luci-lib-docker/d' .config
+
+# 5. 写入正确的配置
+cat >> .config << 'DOCKEREOF'
+CONFIG_PACKAGE_luci-app-dockerman=y
+CONFIG_PACKAGE_luci-lib-docker=y
+CONFIG_PACKAGE_dockerd=y
+CONFIG_PACKAGE_docker-compose=y
+CONFIG_PACKAGE_ttyd=y
+DOCKEREOF
+
+echo "✅ Dockerman 配置已写入"
+
 # 修改 device 设备名称
 sed -i "s/hostname='.*'/hostname='immortalwrt'/g" package/base-files/files/bin/config_generate
 
@@ -126,25 +165,5 @@ sed -i '/CONFIG_PACKAGE_shadowsocks-rust/d' .config
 echo "# CONFIG_PACKAGE_shadowsocks-rust is not set" >> .config
 # 可选：直接删除源码目录，100%不会被编译
 rm -rf feeds/packages/net/shadowsocks-rust
-
-# ======================================
-# Dockerman：使用 lisaac 的 Lua 经典版
-# ======================================
-echo "--- 配置 Lua 版 Dockerman ---"
-
-# 确保官方 JS 版 dockerman 没被勾选
-sed -i 's/^CONFIG_PACKAGE_luci-app-dockerman=y/# CONFIG_PACKAGE_luci-app-dockerman is not set/g' .config
-sed -i '/CONFIG_PACKAGE_luci-app-dockerman/d' .config
-
-# 勾选 lisaac 的 Lua 版 dockerman 及其依赖
-cat >> .config << 'DOCKEREOF'
-CONFIG_PACKAGE_luci-app-dockerman=y
-CONFIG_PACKAGE_luci-lib-docker=y
-CONFIG_PACKAGE_dockerd=y
-CONFIG_PACKAGE_docker-compose=y
-CONFIG_PACKAGE_ttyd=y
-DOCKEREOF
-
-echo "✅ Lua 版 Dockerman 已配置"
 
 echo "=== diy-part2.sh 执行完成==="
