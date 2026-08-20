@@ -1,0 +1,231 @@
+name: ImmortalWrt 手动固件编译带三方dockerman及温度补丁
+
+# 仅手动触发，无自动编译规则
+on:
+  workflow_dispatch:
+    inputs:
+      TARGET_PROFILE:
+        description: 编译机型名称（jdc_ax6600）
+        required: true
+        default: jdc_ax6600
+      COMPILE_THREAD:
+        description: 编译线程数
+        required: true
+        default: "4"
+      SAVE_LOG:
+        description: 是否保存完整编译日志
+        type: boolean
+        default: true
+
+jobs:
+  build_firmware:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: 1. 拉取当前仓库全部文件
+        uses: actions/checkout@v4
+
+      - name: 2. 安装Ubuntu全套编译依赖
+        run: |
+          sudo apt update
+          sudo apt install -y build-essential libncurses-dev gawk flex bison qemu-utils git wget unzip libssl-dev python3 python3-pip time rsync curl
+          sudo apt autoremove -y
+          sudo apt clean
+
+      - name: 3. 克隆 ImmortalWrt 源码（直连GitHub）
+        run: |
+          git clone https://github.com/VIKINGYFY/immortalwrt.git openwrt
+          cd openwrt
+          git pull
+
+      - name: 4. 覆盖自定义 feeds.conf.default（内置第三方插件源）
+        run: |
+          cp -v ./immortalwrt/feeds.conf.default ./openwrt/feeds.conf.default
+
+      - name: 5. 执行前置自定义脚本 diy-part1.sh
+        run: |
+          chmod +x ../immortalwrt/diy-part1.sh
+          ../immortalwrt/diy-part1.sh
+        working-directory: ./openwrt
+
+      - name: 6. 更新并安装全部软件源 feeds
+        run: |
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+        working-directory: ./openwrt
+
+      # ============================================================
+      # 【核心】替换第三方 Lua 版 Dockerman（鲸鱼标老界面）
+      # 同时内嵌首次开机自动生成 docker 网络/防火墙的 uci-defaults 脚本
+      # 解决 IPQ60xx + APK + fw4 下"首次启动没 docker、重启才有"的问题
+      # ============================================================
+      - name: 7. 替换第三方 Lua 版 Dockerman（根治首次启动问题）
+        run: |
+          cd openwrt
+
+          # 1) 彻底清理所有同名包，杜绝双版本冲突
+          rm -rf feeds/luci/applications/luci-app-dockerman
+          rm -rf feeds/luci/collections/luci-lib-docker
+          rm -rf feeds/packages/utils/luci-lib-docker
+          rm -rf package/luci-app-dockerman package/luci-lib-docker
+
+          # 2) 克隆 lisaac 维护的 Lua 经典版
+          git clone --depth=1 https://github.com/lisaac/luci-lib-docker.git tmp-lib-docker
+          git clone --depth=1 https://github.com/lisaac/luci-app-dockerman.git tmp-app-dockerman
+
+          # 3) 提取到 package 根层级（Makefile 在顶层，编译系统才能识别）
+          mv tmp-lib-docker/collections/luci-lib-docker package/luci-lib-docker
+          mv tmp-app-dockerman/applications/luci-app-dockerman package/luci-app-dockerman
+          rm -rf tmp-lib-docker tmp-app-dockerman
+
+          # 4) 移除版本号 v 前缀，适配 APK 包格式强制校验
+          sed -i 's/PKG_VERSION:=v/PKG_VERSION:=/g' package/luci-lib-docker/Makefile
+          sed -i 's/PKG_VERSION:=v/PKG_VERSION:=/g' package/luci-app-dockerman/Makefile
+
+          # 5) 内嵌首次开机初始化脚本（解决 APK/fw4 启动顺序导致的首次缺失）
+          mkdir -p package/luci-app-dockerman/root/etc/uci-defaults
+          cat > package/luci-app-dockerman/root/etc/uci-defaults/99-docker-firstboot << 'EOF'
+          #!/bin/sh
+          # 等网络栈完全就绪（适配 IPQ60xx eMMC 不同启动速度）
+          while ! ip link show lo | grep -q 'UP'; do sleep 1; done
+
+          # 防重入：升级/重启不再重复执行
+          [ -f /etc/config/docker.booted ] && exit 0
+
+          # 写 docker0 桥接口（全系 network 语法通用）
+          uci -q get network.docker_if || {
+            uci batch <<'UCI'
+          set network.docker=device
+          set network.docker.name='docker0'
+          set network.docker.type='bridge'
+          set network.docker.bridge_empty='1'
+          set network.docker.mtu='1500'
+          set network.docker.ipv6='0'
+          set network.docker_if=interface
+          set network.docker_if.device='docker0'
+          set network.docker_if.proto='none'
+          set network.docker_if.auto='0'
+          commit network
+          UCI
+          }
+
+          # 写防火墙 zone（自动适配 fw3/iptables 和 fw4/nftables）
+          uci -q get firewall.docker || {
+            uci batch <<'UCI'
+          set firewall.docker=zone
+          set firewall.docker.name='docker'
+          set firewall.docker.network='docker'
+          set firewall.docker.input='ACCEPT'
+          set firewall.docker.output='ACCEPT'
+          set firewall.docker.forward='ACCEPT'
+          add_list firewall.docker.forward='lan'
+          commit firewall
+          UCI
+          }
+
+          # 重载配置 + 拉起 dockerd
+          uci commit
+          command -v fw4 >/dev/null && fw4 reload || /etc/init.d/firewall reload
+          /etc/init.d/dockerd restart >/dev/null 2>&1
+
+          # 标记已执行，永不重复
+          touch /etc/config/docker.booted
+          rm -f /etc/uci-defaults/99-docker-firstboot
+          exit 0
+          EOF
+          chmod +x package/luci-app-dockerman/root/etc/uci-defaults/99-docker-firstboot
+
+          echo "✅ 第三方 Lua Dockerman 替换完成，首次启动自动生成 docker 配置已加入"
+
+      # ============================================================
+      # 【修复】集成 CPU 温度脚本（改用 base-files 方式，6.18 兼容）
+      # 智能识别 IPQ60xx 的 CPU/SOC 温度节点，不再写死 thermal_zone0
+      # ============================================================
+      - name: 8. 集成CPU温度自定义脚本
+        run: |
+          cd openwrt
+          mkdir -p package/base-files/files/sbin
+          cat > package/base-files/files/sbin/cpuinfo << 'EOF'
+          #!/bin/sh
+          # 适配 IPQ60xx / JDC AX6600 多温度节点，智能识别 CPU 温度
+          CPU_ZONE=""
+          for z in /sys/class/thermal/thermal_zone*; do
+            if [ -r "$z/type" ]; then
+              t=$(cat "$z/type" 2>/dev/null)
+              case "$t" in
+                *cpu*|*CPU*|*soc*|*SOC*)
+                  CPU_ZONE="$z/temp"
+                  break
+                  ;;
+              esac
+            fi
+          done
+
+          # 没找到 cpu 标记的 zone，回退到 thermal_zone0
+          [ -z "$CPU_ZONE" ] && CPU_ZONE="/sys/class/thermal/thermal_zone0/temp"
+
+          if [ -r "$CPU_ZONE" ]; then
+            raw_temp=$(cat "$CPU_ZONE")
+            temp_int=$(( raw_temp / 1000 ))
+            temp_dec=$(( (raw_temp / 100) % 10 ))
+            echo "CPU ${temp_int}.${temp_dec}°C (source: $CPU_ZONE)"
+          else
+            echo "CPU 温度不可用 (thermal 节点缺失)"
+          fi
+          EOF
+          chmod +x package/base-files/files/sbin/cpuinfo
+          echo "✅ cpuinfo 脚本已写入 base-files（ImmortalWrt 6.18 兼容）"
+          ls -l package/base-files/files/sbin/cpuinfo
+
+      - name: 9. 导入自定义编译配置 info.config
+        run: cp -v ./immortalwrt/info.config ./openwrt/.config
+
+      - name: 10. 执行后置自定义脚本 diy-part2.sh
+        run: |
+          chmod +x ../immortalwrt/diy-part2.sh
+          ../immortalwrt/diy-part2.sh
+        working-directory: ./openwrt
+
+      - name: 11. 预编译生成完整配置
+        run: make defconfig
+        working-directory: ./openwrt
+
+      - name: 12. 下载编译依赖源码包
+        run: make download -j${{ github.event.inputs.COMPILE_THREAD }}
+        working-directory: ./openwrt
+
+      - name: 13. 开始编译固件
+        id: compile_task
+        run: make -j${{ github.event.inputs.COMPILE_THREAD }} 2>&1 | tee compile_log.txt
+        working-directory: ./openwrt
+
+      - name: 14. 打包编译日志（成功/失败均保留）
+        if: ${{ github.event.inputs.SAVE_LOG == true || failure() }}
+        run: tar -zcvf compile_log.tar.gz ./openwrt/compile_log.txt
+
+      - name: 15. 上传编译日志产物
+        if: ${{ github.event.inputs.SAVE_LOG == true || failure() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: 编译完整日志
+          path: compile_log.tar.gz
+          retention-days: 7
+
+      - name: 固件目录校验（查看是否生成bin）
+        if: success()
+        run: ls -l openwrt/bin/targets/qualcommax/ipq60xx/
+
+      - name: 16. 上传全新刷机factory固件
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ImmortalWrt_JDC_AX6600_全新刷机_factory
+          path: openwrt/bin/targets/qualcommax/ipq60xx/*factory.bin
+          retention-days: 15
+
+      - name: 17. 上传后台升级sysupgrade固件
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ImmortalWrt_JDC_AX6600_在线升级_sysupgrade
+          path: openwrt/bin/targets/qualcommax/ipq60xx/*sysupgrade.bin
+          retention-days: 15
