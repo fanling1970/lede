@@ -1,131 +1,94 @@
-name: LEDE 手动固件编译【融合优化版】不指定哈希值
+name: Lede最新优化不指定哈希值
 on:
   workflow_dispatch:
     inputs:
-      TARGET_PROFILE:
-        description: 编译机型名称
-        required: true
-        default: jdc_ax6600
       COMPILE_THREAD:
-        description: 编译线程数
+        description: "编译线程数"
         required: true
         default: "4"
-      SAVE_LOG:
-        description: 是否保存完整编译日志
-        type: boolean
-        default: true
 
 jobs:
-  build_firmware:
-    runs-on: ubuntu-22.04
+  build:
+    runs-on: ubuntu‑22.04
     steps:
-      - name: 磁盘空间最大化
+      - name: 最大化磁盘空间
         uses: easimon/maximize-build-space@master
         with:
-          root-reserve-mb: 2048
-          swap-size-mb: 1024
+          root-reserve-mb: 512
           remove-dotnet: 'true'
           remove-android: 'true'
           remove-haskell: 'true'
-          remove-codeql: 'true'
-          remove-docker-images: 'true'
 
-      - name: 1.拉取仓库全部文件
-        uses: actions/checkout@v4
-
-      - name: 磁盘空间检查
-        run: df -hT
+      - name: 检出仓库
+        uses: actions/checkout@main
 
       - name: 2.安装Ubuntu编译依赖
         run: |
           sudo apt update
-          sudo apt install -y build-essential libncurses-dev gawk flex bison qemu-utils git wget unzip libssl-dev python3 python3-pip time rsync curl
+          sudo apt install -y build-essential libncurses-dev gawk flex bison qemu-utils git wget unzip libssl-dev python3 python3-pip time rsync curl libelf-dev zlib1g-dev pkg-config ccache
           sudo apt autoremove -y
           sudo apt clean
 
-      - name: 3.克隆 coolsnowwolf/lede 并锁定 commit de1795d
+      - name: 拉取Lede源码
         run: |
           git clone https://github.com/coolsnowwolf/lede.git openwrt
           cd openwrt
-          git pull
-
-      - name: 4.覆盖自定义 feeds.conf.default
-        run: cp -v ./lede/feeds.conf.default ./openwrt/feeds.conf.default
-
-      - name: 5.执行 diy‑part1.sh
-        run: |
-          chmod +x ../lede/diy-part1.sh
-          ../lede/diy-part1.sh
-        working-directory: ./openwrt
-
-      - name: 6.更新安装feeds
-        run: |
           ./scripts/feeds update -a
           ./scripts/feeds install -a
-        working-directory: ./openwrt
 
-      - name: 7.导入 .config
-        run: cp -v ./lede/info.config ./openwrt/.config
-
-      - name: 8.执行 diy‑part2.sh
+      - name: 复制配置与脚本
         run: |
-          chmod +x ../lede/diy-part2.sh
-          ../lede/diy-part2.sh
-        working-directory: ./openwrt
+          cp -f .config openwrt/.config
+          cp -f diy-part1.sh openwrt/diy-part1.sh
+          cp -f diy-part2.sh openwrt/diy-part2.sh
+          chmod +x openwrt/diy-part1.sh openwrt/diy-part2.sh
+          cd openwrt
+          ./diy-part1.sh
+          ./diy-part2.sh
 
-      - name: 9.make defconfig
-        run: make defconfig
-        working-directory: ./openwrt
+      # Lede 使用源码自带官方 dockerman，不引入第三方，故此处无dockerman替换步骤
 
-      - name: 10.make download
-        run: make download -j${{ github.event.inputs.COMPILE_THREAD }}
-        working-directory: ./openwrt
-
-      - name: 11.编译【高线程失败自动降级单线程】
-        id: compile_task
+      - name: 3.开始编译固件
         run: |
-          set -o pipefail
+          cd openwrt
           COMPILE_THREAD=${{ github.event.inputs.COMPILE_THREAD }}
           echo "==== 使用线程 $COMPILE_THREAD 开始编译 ===="
           make -j${COMPILE_THREAD} 2>&1 | tee compile_log.txt
-          ret_code=$?
+          ret_code=${PIPESTATUS[0]}
 
           if [[ ${ret_code} -ne 0 ]] || grep -q "ERROR:" compile_log.txt ;then
-              echo "==================== 检测编译出错，降级单线程 V=s 重试 ===================="
-              make -j1 V=s 2>&1 | tee -a compile_log.txt
-              ret_code=$?
+            echo "==================== 检测编译出错，降级单线程 V=s 重试 ===================="
+            make -j1 V=s 2>&1 | tee -a compile_log.txt
+            ret_code=${PIPESTATUS[0]}
+
+            if grep -q "toolchain/kernel-headers failed to build" compile_log.txt; then
+              echo "===== 单独执行 toolchain/kernel‑headers 诊断编译 ====="
+              make toolchain/kernel-headers/compile V=s -j1 2>&1 | tee -a compile_log.txt || true
+            fi
           fi
+
           exit ${ret_code}
-        working-directory: ./openwrt
 
-      - name: 12.打包日志
-        if: ${{ github.event.inputs.SAVE_LOG == true || failure() }}
-        run: tar -zcvf compile_log.tar.gz ./openwrt/compile_log.txt
+      - name: Dump kernel‑headers verbose log on failure
+        if: failure()
+        run: |
+          cd openwrt || exit 0
+          echo "生成kernel‑headers诊断日志"
+          make toolchain/kernel-headers/compile V=s -j1 2>&1 | tee kernel_headers_diagnostic.log || true
+          tar -czf kernel_headers_diagnostic.tar.gz kernel_headers_diagnostic.log
 
-      - name: 13.上传编译日志
-        if: ${{ github.event.inputs.SAVE_LOG == true || failure() }}
+      - name: 上传完整编译日志
         uses: actions/upload-artifact@v4
+        if: failure()
         with:
-          name: LEDE_编译完整日志
-          path: compile_log.tar.gz
-          retention-days: 7
+          name: Lede_编译完整日志
+          path: |
+            openwrt/compile_log.txt
+            openwrt/kernel_headers_diagnostic.tar.gz
 
-      - name: 固件目录校验
-        if: success()
-        run: ls -l openwrt/bin/targets/qualcommax/ipq60xx/
-
-      - name: 上传 factory 全新刷机固件
-        if: success()
+      - name: 上传固件工件
         uses: actions/upload-artifact@v4
-        with:
-          name: LEDE_JDC_AX6600_factory
-          path: openwrt/bin/targets/qualcommax/ipq60xx/*factory.bin
-          retention-days: 15
-
-      - name: 上传 sysupgrade 升级固件
         if: success()
-        uses: actions/upload-artifact@v4
         with:
-          name: LEDE_JDC_AX6600_sysupgrade
-          path: openwrt/bin/targets/qualcommax/ipq60xx/*sysupgrade.bin
-          retention-days: 15
+          name: Lede‑Firmware
+          path: openwrt/bin/targets/**/*.bin
