@@ -1,4 +1,4 @@
-name: lede-ax6600手动固件编译
+name: lede-ax6600手动固件编译不锁定源码
 # 仅手动触发，无自动编译规则
 on:
   workflow_dispatch:
@@ -36,11 +36,11 @@ jobs:
           sudo apt autoremove -y
           sudo apt clean
 
-      - name: 3. 克隆 coolsnowwolf/lede 源码并锁定提交 de1795d
+      - name: 3. 克隆 coolsnowwolf/lede 源码
         run: |
           git clone https://github.com/coolsnowwolf/lede.git openwrt
           cd openwrt
-          git checkout de1795d
+          git pull
 
       - name: 4. 覆盖自定义 feeds.conf.default（内置第三方插件源）
         run: cp -v ./lede/feeds.conf.default ./openwrt/feeds.conf.default
