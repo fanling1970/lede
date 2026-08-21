@@ -36,13 +36,22 @@ jobs:
           sudo apt autoremove -y
           sudo apt clean
 
-      - name: 3. 克隆 coolsnowwolf/lede 源码
+      - name: 3. 克隆 coolsnowwolf/lede master源码
         run: |
           git clone https://github.com/coolsnowwolf/lede.git openwrt
           cd openwrt
+          git checkout master
           git pull
 
-      - name: 4. 覆盖自定义 feeds.conf.default（内置第三方插件源）
+      # 滚动更新master后清理旧构建残留，保留dl缓存，解决target/linux随机失败
+      - name: 3‑1 拉取源码后清理内核与编译目录
+        working-directory: ./openwrt
+        run: |
+          make target/linux/dirclean
+          make toolchain/dirclean
+          rm -rf build_dir staging_dir tmp
+
+      - name: 4. 覆盖自定义 feeds.conf.default（luci指定openwrt-25.12分支在此文件内配置）
         run: cp -v ./lede/feeds.conf.default ./openwrt/feeds.conf.default
 
       - name: 5. 执行前置自定义脚本 diy-part1.sh
@@ -52,10 +61,11 @@ jobs:
         working-directory: ./openwrt
 
       - name: 6. 更新并安装全部软件源 feeds
+        working-directory: ./openwrt
         run: |
+          ./scripts/feeds clean
           ./scripts/feeds update -a
           ./scripts/feeds install -a
-        working-directory: ./openwrt
 
       - name: 7. 导入自定义编译配置 info.config
         run: cp -v ./lede/info.config ./openwrt/.config
@@ -74,9 +84,24 @@ jobs:
         run: make download -j${{ github.event.inputs.COMPILE_THREAD }}
         working-directory: ./openwrt
 
-      - name: 11. 开始编译固件
+      - name: 11. 开始编译固件（多线程）
         id: compile_task
-        run: make -j${{ github.event.inputs.COMPILE_THREAD }} 2>&1 | tee compile_log.txt
+        run: |
+          set -o pipefail
+          make -j${{ github.event.inputs.COMPILE_THREAD }} 2>&1 | tee compile_log.txt
+        working-directory: ./openwrt
+
+      # 多线程编译失败：清理后单线程V=s重跑，捕获target/linux真实错误
+      - name: 11‑1 编译失败，单线程详细模式重跑捕获错误
+        if: failure()
+        id: compile_debug
+        run: |
+          set -o pipefail
+          make target/linux/dirclean
+          rm -rf build_dir staging_dir tmp
+          make defconfig
+          make download -j2
+          make -j1 V=s 2>&1 | tee compile_log.txt
         working-directory: ./openwrt
 
       - name: 12. 打包编译日志（成功/失败均保留）
