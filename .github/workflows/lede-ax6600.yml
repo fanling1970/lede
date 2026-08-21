@@ -45,6 +45,7 @@ jobs:
       - name: 3‑1 拉取源码后清理内核与编译目录
         working-directory: ./openwrt
         run: |
+          make defconfig
           make target/linux/dirclean
           make toolchain/dirclean
           rm -rf build_dir staging_dir tmp
@@ -89,15 +90,15 @@ jobs:
           make -j${{ github.event.inputs.COMPILE_THREAD }} 2>&1 | tee compile_log.txt
         working-directory: ./openwrt
 
-      # 上面步骤真正失败时，进入单线程详细模式抓取target/linux报错
+      # 上面步骤真正失败时，进入单线程详细模式抓取target/linux报错，先defconfig规避menuconfig弹窗
       - name: 11‑1 编译失败，单线程详细模式重跑捕获错误
         if: failure()
         id: compile_debug
         run: |
           set -o pipefail
+          make defconfig
           make target/linux/dirclean
           rm -rf build_dir staging_dir tmp
-          make defconfig
           make download -j2
           make -j1 V=s 2>&1 | tee compile_log.txt
         working-directory: ./openwrt
