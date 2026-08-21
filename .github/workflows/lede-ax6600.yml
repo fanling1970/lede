@@ -97,8 +97,13 @@ jobs:
           rm -rf build_dir/* staging_dir/* tmp
           make defconfig
           make download -j2
-          make -j1 V=s 2>&1 | tee compile_log.txt
+          # 关键：设置非交互，避免configure卡死
+          export CONFIG_SHELL=/bin/bash
+          export DEBIAN_FRONTEND=noninteractive
+          export OPENSSL_ENGINES=no
+          timeout 45m make -j1 V=s 2>&1 | tee compile_log.txt
         working-directory: ./openwrt
+
 
 
       - name: 12. 打包编译日志（成功/失败均保留）
