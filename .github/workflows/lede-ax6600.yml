@@ -18,11 +18,6 @@ on:
 jobs:
   build_firmware:
     runs-on: ubuntu-22.04
-    defaults:
-      run:
-        shell: bash
-        # 全局开启管道失败，解决 make | tee 吃掉错误码
-        options: -o pipefail
     steps:
       - name: 1. 拉取当前仓库全部文件
         uses: actions/checkout@v4
@@ -89,14 +84,17 @@ jobs:
 
       - name: 11. 开始编译固件（多线程）
         id: compile_task
-        run: make -j${{ github.event.inputs.COMPILE_THREAD }} 2>&1 | tee compile_log.txt
+        run: |
+          set -o pipefail
+          make -j${{ github.event.inputs.COMPILE_THREAD }} 2>&1 | tee compile_log.txt
         working-directory: ./openwrt
 
-      # 仅当上面编译步骤真正失败时，执行单线程V=s抓日志
+      # 上面步骤真正失败时，进入单线程详细模式抓取target/linux报错
       - name: 11‑1 编译失败，单线程详细模式重跑捕获错误
         if: failure()
         id: compile_debug
         run: |
+          set -o pipefail
           make target/linux/dirclean
           rm -rf build_dir staging_dir tmp
           make defconfig
@@ -116,7 +114,7 @@ jobs:
           path: compile_log.tar.gz
           retention-days: 7
 
-      # 只有整体编译成功，才执行固件校验与上传
+      # 只有编译完全成功，才执行固件校验、上传
       - name: 固件目录校验（查看是否生成bin）
         if: success()
         run: ls -l openwrt/bin/targets/qualcommax/ipq60xx/
