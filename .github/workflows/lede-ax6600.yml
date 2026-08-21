@@ -42,13 +42,6 @@ jobs:
           git checkout master
           git pull
 
-      - name: 3. 克隆 coolsnowwolf/lede master源码
-        run: |
-          git clone https://github.com/coolsnowwolf/lede.git openwrt
-          cd openwrt
-          git checkout master
-          git pull
-
       - name: 3‑1 拉取源码后清理内核与编译目录
         working-directory: ./openwrt
         run: |
