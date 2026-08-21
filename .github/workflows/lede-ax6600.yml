@@ -1,5 +1,4 @@
 name: lede-ax6600手动固件编译不锁定源码
-# 仅手动触发，无自动编译规则
 on:
   workflow_dispatch:
     inputs:
@@ -19,6 +18,11 @@ on:
 jobs:
   build_firmware:
     runs-on: ubuntu-22.04
+    defaults:
+      run:
+        shell: bash
+        # 全局开启管道失败，解决 make | tee 吃掉错误码
+        options: -o pipefail
     steps:
       - name: 1. 拉取当前仓库全部文件
         uses: actions/checkout@v4
@@ -43,7 +47,6 @@ jobs:
           git checkout master
           git pull
 
-      # 滚动更新master后清理旧构建残留，保留dl缓存，解决target/linux随机失败
       - name: 3‑1 拉取源码后清理内核与编译目录
         working-directory: ./openwrt
         run: |
@@ -51,7 +54,7 @@ jobs:
           make toolchain/dirclean
           rm -rf build_dir staging_dir tmp
 
-      - name: 4. 覆盖自定义 feeds.conf.default（luci指定openwrt-25.12分支在此文件内配置）
+      - name: 4. 覆盖自定义 feeds.conf.default
         run: cp -v ./lede/feeds.conf.default ./openwrt/feeds.conf.default
 
       - name: 5. 执行前置自定义脚本 diy-part1.sh
@@ -86,17 +89,14 @@ jobs:
 
       - name: 11. 开始编译固件（多线程）
         id: compile_task
-        run: |
-          set -o pipefail
-          make -j${{ github.event.inputs.COMPILE_THREAD }} 2>&1 | tee compile_log.txt
+        run: make -j${{ github.event.inputs.COMPILE_THREAD }} 2>&1 | tee compile_log.txt
         working-directory: ./openwrt
 
-      # 多线程编译失败：清理后单线程V=s重跑，捕获target/linux真实错误
+      # 仅当上面编译步骤真正失败时，执行单线程V=s抓日志
       - name: 11‑1 编译失败，单线程详细模式重跑捕获错误
         if: failure()
         id: compile_debug
         run: |
-          set -o pipefail
           make target/linux/dirclean
           rm -rf build_dir staging_dir tmp
           make defconfig
@@ -116,6 +116,7 @@ jobs:
           path: compile_log.tar.gz
           retention-days: 7
 
+      # 只有整体编译成功，才执行固件校验与上传
       - name: 固件目录校验（查看是否生成bin）
         if: success()
         run: ls -l openwrt/bin/targets/qualcommax/ipq60xx/
