@@ -42,13 +42,17 @@ jobs:
           git checkout master
           git pull
 
+      - name: 3. 克隆 coolsnowwolf/lede master源码
+        run: |
+          git clone https://github.com/coolsnowwolf/lede.git openwrt
+          cd openwrt
+          git checkout master
+          git pull
+
       - name: 3‑1 拉取源码后清理内核与编译目录
         working-directory: ./openwrt
         run: |
-          make defconfig
-          make target/linux/dirclean
-          make toolchain/dirclean
-          rm -rf build_dir staging_dir tmp
+          rm -rf build_dir staging_dir tmp .config
 
       - name: 4. 覆盖自定义 feeds.conf.default
         run: cp -v ./lede/feeds.conf.default ./openwrt/feeds.conf.default
@@ -79,6 +83,7 @@ jobs:
         run: make defconfig
         working-directory: ./openwrt
 
+
       - name: 10. 下载编译依赖源码包
         run: make download -j${{ github.event.inputs.COMPILE_THREAD }}
         working-directory: ./openwrt
@@ -96,12 +101,12 @@ jobs:
         id: compile_debug
         run: |
           set -o pipefail
+          rm -rf build_dir/* staging_dir/* tmp
           make defconfig
-          make target/linux/dirclean
-          rm -rf build_dir staging_dir tmp
           make download -j2
           make -j1 V=s 2>&1 | tee compile_log.txt
         working-directory: ./openwrt
+
 
       - name: 12. 打包编译日志（成功/失败均保留）
         if: ${{ github.event.inputs.SAVE_LOG == 'true' || failure() }}
