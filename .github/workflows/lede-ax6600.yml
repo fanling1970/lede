@@ -1,4 +1,4 @@
-name: lede-ax6600手动固件编译不锁定源码
+name: lede-ax6600【调试抓日志】直接-j1 V=s
 on:
   workflow_dispatch:
     inputs:
@@ -7,9 +7,9 @@ on:
         required: true
         default: jdc_ax6600
       COMPILE_THREAD:
-        description: 编译线程数
+        description: 本调试版本固定-j1，此输入不生效
         required: true
-        default: "4"
+        default: "1"
       SAVE_LOG:
         description: 是否保存完整编译日志
         type: boolean
@@ -18,6 +18,7 @@ on:
 jobs:
   build_firmware:
     runs-on: ubuntu-22.04
+    timeout-minutes: 180
     steps:
       - name: 1. 拉取当前仓库全部文件
         uses: actions/checkout@v4
@@ -42,10 +43,11 @@ jobs:
           git checkout master
           git pull
 
-      - name: 3‑1 拉取源码后清理内核与编译目录
+      - name: 3‑1 拉取源码后清理编译目录
         working-directory: ./openwrt
         run: |
-          rm -rf build_dir staging_dir tmp .config
+          make defconfig
+          rm -rf build_dir staging_dir tmp
 
       - name: 4. 覆盖自定义 feeds.conf.default
         run: cp -v ./lede/feeds.conf.default ./openwrt/feeds.conf.default
@@ -76,49 +78,32 @@ jobs:
         run: make defconfig
         working-directory: ./openwrt
 
-
       - name: 10. 下载编译依赖源码包
-        run: make download -j${{ github.event.inputs.COMPILE_THREAD }}
+        run: make download -j2
         working-directory: ./openwrt
 
-      - name: 11. 开始编译固件（多线程）
+      - name: 11.【调试】单线程完整日志编译 make -j1 V=s
         id: compile_task
         run: |
           set -o pipefail
-          make -j${{ github.event.inputs.COMPILE_THREAD }} 2>&1 | tee compile_log.txt
-        working-directory: ./openwrt
-
-      # 上面步骤真正失败时，进入单线程详细模式抓取target/linux报错，先defconfig规避menuconfig弹窗
-      - name: 11‑1 编译失败，单线程详细模式重跑捕获错误
-        if: failure()
-        id: compile_debug
-        run: |
-          set -o pipefail
-          rm -rf build_dir/* staging_dir/* tmp
-          make defconfig
-          make download -j2
-          # 关键：设置非交互，避免configure卡死
           export CONFIG_SHELL=/bin/bash
           export DEBIAN_FRONTEND=noninteractive
-          export OPENSSL_ENGINES=no
-          timeout 45m make -j1 V=s 2>&1 | tee compile_log.txt
+          # 140分钟超时，防止configure无限hang死
+          timeout --signal=TERM 140m make -j1 V=s 2>&1 | tee compile_log.txt
         working-directory: ./openwrt
 
-
-
-      - name: 12. 打包编译日志（成功/失败均保留）
-        if: ${{ github.event.inputs.SAVE_LOG == 'true' || failure() }}
+      - name: 12. 打包编译日志（成功/失败/超时均保留）
+        if: ${{ github.event.inputs.SAVE_LOG == 'true' || failure() || cancelled() }}
         run: tar -zcvf compile_log.tar.gz ./openwrt/compile_log.txt
 
       - name: 13. 上传编译日志产物
-        if: ${{ github.event.inputs.SAVE_LOG == 'true' || failure() }}
+        if: ${{ github.event.inputs.SAVE_LOG == 'true' || failure() || cancelled() }}
         uses: actions/upload-artifact@v4
         with:
-          name: 编译完整日志
+          name: 调试‑完整编译日志
           path: compile_log.tar.gz
           retention-days: 7
 
-      # 只有编译完全成功，才执行固件校验、上传
       - name: 固件目录校验（查看是否生成bin）
         if: success()
         run: ls -l openwrt/bin/targets/qualcommax/ipq60xx/
