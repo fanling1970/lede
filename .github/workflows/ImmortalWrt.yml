@@ -51,24 +51,6 @@ jobs:
           ./scripts/feeds install -a
         working-directory: ./openwrt
 
-      - name: 集成CPU温度自定义脚本
-        run: |
-          mkdir -p files/sbin
-          echo '#!/bin/sh' > files/sbin/cpuinfo
-          echo '# 适配IPQ60xx平台的CPU温度读取' >> files/sbin/cpuinfo
-          echo 'TEMP_PATH="/sys/class/thermal/thermal_zone0/temp"' >> files/sbin/cpuinfo
-          echo '' >> files/sbin/cpuinfo
-          echo 'if [ -r "$TEMP_PATH" ]; then' >> files/sbin/cpuinfo
-          echo '    raw_temp=$(cat "$TEMP_PATH")' >> files/sbin/cpuinfo
-          echo '    temp_int=$(( raw_temp / 1000 ))' >> files/sbin/cpuinfo
-          echo '    temp_dec=$(( (raw_temp / 100) % 10 ))' >> files/sbin/cpuinfo
-          echo '    cpu_temp="${temp_int}.${temp_dec}"' >> files/sbin/cpuinfo
-          echo '    echo "CPU ${cpu_temp}°C"' >> files/sbin/cpuinfo
-          echo 'else' >> files/sbin/cpuinfo
-          echo '    echo "CPU 0.0°C"' >> files/sbin/cpuinfo
-          echo 'fi' >> files/sbin/cpuinfo
-          chmod +x files/sbin/cpuinfo
-
       - name: 7. 导入自定义编译配置 info.config
         run: cp -v ./immortalwrt/info.config ./openwrt/.config
 
