@@ -1,4 +1,4 @@
-name: LEDE 手动固件编译【融合优化版】指定哈希值
+name: lede-22 手动固件编译【融合优化版】指定哈希值
 on:
   workflow_dispatch:
     inputs:
