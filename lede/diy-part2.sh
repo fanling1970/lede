@@ -1,5 +1,107 @@
 #!/bin/bash
 # diy-part2.sh - 在 feeds install 之后执行
+
+# ==============================================================================
+# diy-part2.sh 完整成品
+# 功能：CI编译阶段动态生成files，固化fstab + 95‑mmc‑docker‑prep开机脚本
+# 目标设备：京东云雅典娜AX6600 IPQ60xx
+# eMMC分区UUID：1a99b9cc-fa4a-4f08-a4e0-5523f260d532  mmcblk0p27 → /mnt/mmcdata
+# Docker自动迁移根目录至 /mnt/mmcdata/docker
+# 执行时机：feeds完成之后，make编译之前；不修改git源码，仅临时生成files
+# ==============================================================================
+
+# -------------------------- 1.动态生成files目录树 -----------------------------
+rm -rf ./files
+mkdir -p ./files/etc/config
+mkdir -p ./files/etc/init.d
+mkdir -p ./files/mnt/mmcdata
+
+# 生成 /etc/config/fstab
+cat > ./files/etc/config/fstab <<'EOF'
+config global
+        option anon_mount '1'
+        option auto_swap '1'
+
+config mount
+        option target '/overlay'
+        option device '/dev/loop0'
+        option fstype 'ext4'
+        option options 'rw'
+        option enabled '1'
+        option enabled_fsck '0'
+
+# eMMC mmcblk0p27 内置分区
+config mount
+        option uuid '1a99b9cc-fa4a-4f08-a4e0-5523f260d532'
+        option target '/mnt/mmcdata'
+        option fstype 'ext4'
+        option options 'rw,sync'
+        option enabled '1'
+        option enabled_fsck '1'
+EOF
+
+# 生成开机预处理脚本 95‑mmc‑docker‑prep
+cat > ./files/etc/init.d/95-mmc-docker-prep <<'SCRIPT_EOF'
+#!/bin/sh /etc/rc.common
+
+START=95
+STOP=0
+
+DOCKER_ROOT="/mnt/mmcdata/docker"
+MMC_DEV="/dev/mmcblk0p27"
+
+start() {
+        local cnt=0
+        # 等待mmc块设备就绪，最多4秒
+        while [ ! -b "${MMC_DEV}" ] && [ $cnt -lt 20 ]; do
+                sleep 0.2
+                cnt=$((cnt+1))
+        done
+
+        block mount
+
+        if mountpoint -q /mnt/mmcdata; then
+                mkdir -p "${DOCKER_ROOT}"
+                chmod 700 "${DOCKER_ROOT}"
+
+                uci set dockerd.settings.data_root="${DOCKER_ROOT}"
+                uci set dockerd.settings.auto_start='1'
+                uci commit dockerd
+
+                # 一次性迁移旧docker数据，标记.migrated避免重复拷贝
+                local old_docker="/overlay/upper/usr/share/docker"
+                if [ -d "${old_docker}" ] && [ ! -f "${DOCKER_ROOT}/.migrated" ]; then
+                        cp -a "${old_docker}/." "${DOCKER_ROOT}/" 2>/dev/null
+                        touch "${DOCKER_ROOT}/.migrated"
+                fi
+        fi
+}
+SCRIPT_EOF
+
+# 强制设置权限，至关重要
+chmod 755 ./files/etc/init.d/95-mmc-docker-prep
+chmod 755 ./files/mnt/mmcdata
+
+# OpenWrt编译系统环境变量，注入自定义files
+export FILES="$PWD/files"
+echo "[diy-part2] FILES set to $FILES"
+
+# -------------------------- 2.处理MMC内核配置，清除旧模块配置 ----------------
+sed -i '/CONFIG_MMC=/d' .config
+sed -i '/CONFIG_MMC_SDHCI=/d' .config
+sed -i '/CONFIG_MMC_SDHCI_PLTFM=/d' .config
+
+cat >> .config <<'CFG_EOF'
+CONFIG_MMC=y
+CONFIG_MMC_SDHCI=y
+CONFIG_MMC_SDHCI_PLTFM=y
+CFG_EOF
+
+# -------------------------- 3.输出关键配置，CI日志方便排查 ---------------------
+echo "==================== .config key options check ===================="
+grep -E 'CONFIG_MMC|CONFIG_PACKAGE_block-mount|CONFIG_PACKAGE_mountpoint-utils|CONFIG_PACKAGE_dockerd' .config
+echo "=================================================================="
+
 echo "=== [DIY-P2] 开始配置第三方包和系统设置 ==="
 
 # ======================================
