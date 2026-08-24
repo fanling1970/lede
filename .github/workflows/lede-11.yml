@@ -1,0 +1,134 @@
+name: lede-11 手动固件编译指定哈希值带docker
+# 仅手动触发，无自动编译规则
+on:
+  workflow_dispatch:
+    inputs:
+      TARGET_PROFILE:
+        description: 编译机型名称（jdc_ax6600）
+        required: true
+        default: jdc_ax6600
+      COMPILE_THREAD:
+        description: 编译线程数
+        required: true
+        default: "4"
+      SAVE_LOG:
+        description: 是否保存完整编译日志
+        type: boolean
+        default: true
+
+jobs:
+  build_firmware:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: 1. 拉取当前仓库全部文件
+        uses: actions/checkout@v4
+
+      - name: 2. 安装Ubuntu全套编译依赖
+        run: |
+          sudo apt update
+          sudo apt install -y build-essential libncurses-dev gawk flex bison qemu-utils git wget unzip libssl-dev python3 python3-pip time rsync curl
+          sudo apt autoremove -y
+          sudo apt clean
+
+      - name: 3.克隆 coolsnowwolf/lede 并锁定 commit 2ee5dbe
+        run: |
+          git clone https://github.com/coolsnowwolf/lede.git openwrt
+          cd openwrt
+          git checkout 2ee5dbe
+
+      - name: 4. 覆盖自定义 feeds.conf.default
+        run: cp -v ./lede/feeds.conf.default ./openwrt/feeds.conf.default
+
+      - name: 5. 执行前置自定义脚本 diy-part1.sh
+        run: |
+          chmod +x ../lede/diy-part1.sh
+          ../lede/diy-part1.sh
+        working-directory: ./openwrt
+
+      # 【关键修改】替换官方Dockerman为第三方完整版（移至update后执行，确保旧版被正确清理）
+      - name: 替换为第三方完整版 Dockerman
+        run: |
+          cd openwrt
+          # 1. 彻底清理所有同名包，覆盖lede所有默认路径，杜绝双版本冲突
+          rm -rf feeds/luci/applications/luci-app-dockerman
+          rm -rf feeds/luci/collections/luci-lib-docker
+          rm -rf feeds/luci/libs/luci-lib-docker
+          rm -rf feeds/packages/utils/luci-lib-docker
+          rm -rf package/luci-app-dockerman package/luci-lib-docker
+
+          # 2. 克隆到临时目录
+          git clone --depth=1 https://github.com/lisaac/luci-lib-docker.git tmp-lib-docker
+          git clone --depth=1 https://github.com/lisaac/luci-app-dockerman.git tmp-app-dockerman
+
+          # 3. 提取实际包目录到 package 根层级（优先级高于feeds，自动生效）
+          mv tmp-lib-docker/collections/luci-lib-docker package/luci-lib-docker
+          mv tmp-app-dockerman/applications/luci-app-dockerman package/luci-app-dockerman
+
+          # 4. 清理临时目录
+          rm -rf tmp-lib-docker tmp-app-dockerman
+
+          # 5. 统一移除版本号v前缀，兼容IPK包格式
+          sed -i 's/PKG_VERSION:=v/PKG_VERSION:=/g' package/luci-lib-docker/Makefile
+          sed -i 's/PKG_VERSION:=v/PKG_VERSION:=/g' package/luci-app-dockerman/Makefile
+
+          echo "第三方 Dockerman 替换完成，旧版已彻底清理"
+
+      - name: 6. 更新并安装全部软件源 feeds
+        run: |
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+        working-directory: ./openwrt
+
+      - name: 7. 导入自定义编译配置 info.config
+        run: cp -v ./lede/info.config ./openwrt/.config
+
+      - name: 8. 执行后置自定义脚本 diy-part2.sh
+        run: |
+          chmod +x ../lede/diy-part2.sh
+          ../lede/diy-part2.sh
+        working-directory: ./openwrt
+
+      - name: 9. 预编译生成完整配置
+        run: make defconfig
+        working-directory: ./openwrt
+
+      - name: 10. 下载编译依赖源码包
+        run: make download -j${{ github.event.inputs.COMPILE_THREAD }}
+        working-directory: ./openwrt
+
+      - name: 11. 开始编译固件
+        id: compile_task
+        run: make -j${{ github.event.inputs.COMPILE_THREAD }} 2>&1 | tee compile_log.txt
+        working-directory: ./openwrt
+
+      - name: 12. 打包编译日志
+        if: ${{ github.event.inputs.SAVE_LOG == true || failure() }}
+        run: tar -zcvf compile_log.tar.gz ./openwrt/compile_log.txt
+
+      - name: 13. 上传编译日志产物
+        if: ${{ github.event.inputs.SAVE_LOG == true || failure() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: 编译完整日志
+          path: compile_log.tar.gz
+          retention-days: 7
+
+      - name: 固件目录校验
+        if: success()
+        run: ls -l openwrt/bin/targets/qualcommax/ipq60xx/
+
+      - name: 14. 上传全新刷机factory固件
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lede_JDC_AX6600_全新刷机_factory
+          path: openwrt/bin/targets/qualcommax/ipq60xx/*factory.bin
+          retention-days: 15
+
+      - name: 15. 上传后台升级sysupgrade固件
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lede_JDC_AX6600_在线升级_sysupgrade
+          path: openwrt/bin/targets/qualcommax/ipq60xx/*sysupgrade.bin
+          retention-days: 15
