@@ -40,7 +40,7 @@ jobs:
     steps:
     - name: 1. 拉取当前仓库全部文件
       uses: actions/checkout@v4
-	  
+
     - name: 2. 安装Ubuntu全套编译依赖
       run: |
         sudo apt update
