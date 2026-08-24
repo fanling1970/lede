@@ -1,4 +1,4 @@
-name: LEDE 手动固件编译【融合优化版】指定哈希值带docker
+name: lede-33 手动固件编译【融合优化版】指定哈希值带docker
 on:
   workflow_dispatch:
     inputs:
