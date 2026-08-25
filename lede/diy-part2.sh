@@ -144,7 +144,7 @@ fi
 # =============================================
 # 创建自定义 files 目录结构
 # =============================================
-mkdir -p files/etc/config
+mkdir -p files/etc/docker files/mnt/mmcblk0p27/docker
 
 # =============================================
 # 1. 固化 /mnt/mmcblk0p27 开机自动挂载
@@ -166,18 +166,13 @@ config mount
 EOF
 
 # =============================================
-# 2. 将 Docker 根目录修改为 /mnt/mmcblk0p27/docker
+# 2. Docker 守护进程配置（固化到 /etc/docker/daemon.json）
+#    不写入 /etc/config/dockerd，避免 UCI 类型校验问题
+#    刷机后 dockerd 默认读取 /etc/docker/daemon.json 自动生效
 # =============================================
-cat > files/etc/config/dockerd <<'EOF'
-config globals
-	option data_root '/mnt/mmcblk0p27/docker'
-	option overlay '/opt/docker'
+cat > files/etc/docker/daemon.json <<'EOF'
+{ "data-root": "/mnt/mmcblk0p27/docker", "log-level": "warn", "iptables": true, "ip6tables": false }
 EOF
-
-# =============================================
-# 3. 创建 Docker 数据目录（编译时会在固件中创建）
-# =============================================
-mkdir -p files/mnt/mmcblk0p27/docker
 
 
 echo "✅ [DIY-P2] 所有配置完成"
