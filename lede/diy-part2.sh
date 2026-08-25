@@ -141,38 +141,88 @@ else
     echo "⚠️ 源码自带 OpenClash 不存在，将在下次编译时恢复"
 fi
 
-# =============================================
-# 创建自定义 files 目录结构
-# =============================================
-mkdir -p files/etc/docker files/mnt/mmcblk0p27/docker
+rm -rf ./files
+mkdir -p ./files/etc/config
+mkdir -p ./files/etc/hotplug.d/block
+mkdir -p ./files/etc/docker
 
-# =============================================
-# 1. 固化 /mnt/mmcblk0p27 开机自动挂载
-# =============================================
-cat > files/etc/config/fstab <<'EOF'
+# ===================== fstab 配置 =====================
+cat > ./files/etc/config/fstab <<'EOF'
 config global
-	option anon_swap '0'
-	option anon_mount '0'
-	option auto_swap '1'
-	option auto_mount '1'
-	option delay_root '0'
-	option check_fs '0'
+        option anon_mount '1'
+        option auto_swap '1'
 
 config mount
-	option target '/mnt/mmcblk0p27'
-	option uuid '1a99b9cc-fa4a-4f08-a4e0-5523f260d532'
-	option enabled '1'
-	option fstype 'ext4'
+        option target '/overlay'
+        option device '/dev/loop0'
+        option fstype 'ext4'
+        option options 'rw'
+        option enabled '1'
+        option enabled_fsck '0'
+
+config mount
+        option uuid '1a99b9cc-fa4a-4f08-a4e0-5523f260d532'
+        option target '/mnt/mmcblk0p27'
+        option fstype 'ext4'
+        option options 'rw'
+        option enabled '1'
+        option enabled_fsck '1'
 EOF
 
-# =============================================
-# 2. Docker 守护进程配置（固化到 /etc/docker/daemon.json）
-#    不写入 /etc/config/dockerd，避免 UCI 类型校验问题
-#    刷机后 dockerd 默认读取 /etc/docker/daemon.json 自动生效
-# =============================================
-cat > files/etc/docker/daemon.json <<'EOF'
-{ "data-root": "/mnt/mmcblk0p27/docker", "log-level": "warn", "iptables": true, "ip6tables": false }
-EOF
+# ===================== docker daemon.json 指定根目录 =====================
+# 直接固定Docker根目录到eMMC分区，不再依赖脚本修改
+cat > ./files/etc/docker/daemon.json <<'JSONEOF'
+{
+  "data-root": "/mnt/mmcblk0p27/docker",
+  "log-driver": "json-file",
+  "log-opts": {
+    "max-size": "10m",
+    "max-file": "3"
+  }
+}
+JSONEOF
 
+# ===================== Hotplug block钩子：mmc设备出现自动执行block mount =====================
+cat > ./files/etc/hotplug.d/block/20-mmc-auto-mount <<'HOTPLUG_EOF'
+#!/bin/sh
+case "$ACTION" in
+add)
+    case "$DEVNAME" in
+    mmcblk*)
+        logger -t hotplug-mmc "Detected block device: $DEVNAME, trigger block mount"
+        block mount
+        ;;
+    esac
+;;
+esac
+HOTPLUG_EOF
+chmod 755 ./files/etc/hotplug.d/block/20-mmc-auto-mount
+
+# ===================== 修改 dockerd 启动序号延后至 START=99 =====================
+# dockerd.init 来自 feeds/packages/dockerd
+sed -i 's/START=90/START=99/' ./package/feeds/packages/dockerd/files/dockerd.init
+
+# ===================== 内核配置：MMC、Swap支持 =====================
+sed -i '/CONFIG_MMC=/d' .config
+sed -i '/CONFIG_MMC_SDHCI=/d' .config
+sed -i '/CONFIG_MMC_SDHCI_PLTFM=/d' .config
+sed -i '/CONFIG_SWAP=/d' .config
+sed -i '/CONFIG_SWAPFILE=/d' .config
+sed -i '/CONFIG_KERNEL_SWAP=/d' .config
+
+cat >> .config <<'CFG_EOF'
+CONFIG_MMC=y
+CONFIG_MMC_SDHCI=y
+CONFIG_MMC_SDHCI_PLTFM=y
+CONFIG_SWAP=y
+CONFIG_SWAPFILE=y
+CONFIG_KERNEL_SWAP=y
+CFG_EOF
+
+echo "=== Check config summary ==="
+grep -E 'CONFIG_MMC|CONFIG_SWAP|CONFIG_PACKAGE_dockerd' .config
+ls -l ./files/etc/hotplug.d/block/
+cat ./files/etc/docker/daemon.json
+echo "============================"
 
 echo "✅ [DIY-P2] 所有配置完成"
