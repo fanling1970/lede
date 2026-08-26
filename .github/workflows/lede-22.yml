@@ -10,7 +10,7 @@
 # updated version ref: https://github.com/dxdf/ActionsBuildOpenWRT
 # 使用6月20日提交
 
-name: lede-22修改版版本24.05
+name: lede-22修改版luci版本24.10
 
 # 禁用自动触发，仅保留手动触发
 on:
