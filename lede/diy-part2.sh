@@ -1,42 +1,47 @@
 #!/bin/bash
 # diy-part2.sh - 在 feeds install 之后执行
 
-# ============================================================
-# Docker 存储迁移至 eMMC (mmcblk0p27) 自动化配置
-# 适用于: 京东云雅典娜 / LEDE / GitHub Actions 云编译
-# ============================================================
-
 # 在 diy-part2.sh 开头加一行调试，Actions 日志中可查看实际路径
 find . -path "*/dockerd" -name "dockerd" 2>/dev/null | head -5
 
+# ============================================================
+# Docker 存储迁移至 eMMC (mmcblk0p27) 自动化配置
+# 适用于: 京东云雅典娜 / GitHub Actions 云编译
+# ============================================================
+
 echo ">>> [DIY-PART2] 配置 Docker 数据根目录至 mmcblk0p27..."
 
-# 1. 修改 Dockerman UCI 默认配置
-# 注意: 必须在 package/lean/luci-app-dockerman 或相关 dockerd 包编译前/后处理
-# 这里通过修改默认配置文件实现，确保首次启动即为新路径
-DOCKERD_DEFAULTS="package/lean/luci-app-dockerman/root/etc/config/dockerd"
+# 1. 修改 dockerd UCI 默认配置 (根据实际 feeds 路径)
+DOCKERD_DEFAULTS="feeds/packages/utils/dockerd/files/etc/config/dockerd"
 if [ -f "$DOCKERD_DEFAULTS" ]; then
-    sed -i "s|option data_root.*|option data_root '/mnt/mmcblk0p27/docker'|" "$DOCKERD_DEFAULTS"
-    # 如果原文件没有 wait_path，则追加；如果有则替换
+    # 修改 data_root
+    if grep -q "option data_root" "$DOCKERD_DEFAULTS"; then
+        sed -i "s|option data_root.*|option data_root '/mnt/mmcblk0p27/docker'|" "$DOCKERD_DEFAULTS"
+    else
+        echo -e "\toption data_root '/mnt/mmcblk0p27/docker'" >> "$DOCKERD_DEFAULTS"
+    fi
+
+    # 添加/修改 wait_path
     if grep -q "option wait_path" "$DOCKERD_DEFAULTS"; then
         sed -i "s|option wait_path.*|option wait_path '/mnt/mmcblk0p27/docker'|" "$DOCKERD_DEFAULTS"
     else
         sed -i "/option data_root/a\\toption wait_path '/mnt/mmcblk0p27/docker'" "$DOCKERD_DEFAULTS"
     fi
-    echo "    ✔ dockerd UCI defaults 已修改"
+    echo "    ✔ dockerd UCI defaults 已修改: $DOCKERD_DEFAULTS"
 else
-    echo "    ⚠ 未找到 $DOCKERD_DEFAULTS，请检查 dockerman 包路径是否变更"
+    echo "    ✘ 错误: 未找到 $DOCKERD_DEFAULTS"
+    exit 1  # 路径错误时中断编译，避免产出无效固件
 fi
 
-# 2. 注入 fstab 挂载配置 (uci-defaults 方式，仅首次启动执行)
+# 2. 注入首次启动挂载脚本 (uci-defaults)
 mkdir -p files/etc/uci-defaults
 cat > files/etc/uci-defaults/99-docker-emmc-mount << 'UCIEOF'
 #!/bin/sh
 # === 首次启动: 配置 mmcblk0p27 为 Docker 存储分区 ===
 
-# 替代方案: 如果条目不存在则新建
-if ! uci -q get fstab.@mount[-1].device | grep -q "mmcblk0p27"; then
-    uci add fstab mount
+# 安全创建/更新 fstab 挂载条目
+if ! uci -q get fstab.@mount[-1].device 2>/dev/null | grep -q "mmcblk0p27"; then
+    uci add fstab mount >/dev/null
     uci set fstab.@mount[-1].device='/dev/mmcblk0p27'
     uci set fstab.@mount[-1].target='/mnt/mmcblk0p27'
     uci set fstab.@mount[-1].fstype='ext4'
@@ -45,7 +50,7 @@ uci set fstab.@mount[-1].enabled='1'
 uci set fstab.@mount[-1].options='rw,noatime,nodiratime,discard'
 uci commit fstab
 
-# 写入 rc.local 可靠挂载脚本 (在 exit 0 之前插入)
+# 写入 rc.local 可靠挂载脚本
 RC_LOCAL="/etc/rc.local"
 if ! grep -q "docker-mount" "$RC_LOCAL" 2>/dev/null; then
     sed -i '/^exit 0$/i\
@@ -68,14 +73,10 @@ if ! grep -q "docker-mount" "$RC_LOCAL" 2>/dev/null; then
 ) &\
 ' "$RC_LOCAL"
 fi
-
-# 标记已执行，防止重复运行
-touch /tmp/.docker_emmc_configured
 UCIEOF
 
 chmod +x files/etc/uci-defaults/99-docker-emmc-mount
 echo "    ✔ uci-defaults 挂载脚本已注入"
-
 echo ">>> [DIY-PART2] Docker eMMC 配置完成"
 
 
