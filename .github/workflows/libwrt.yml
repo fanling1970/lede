@@ -10,7 +10,7 @@
 # updated version ref: https://github.com/dxdf/ActionsBuildOpenWRT
 # 新增：替换官方简陋Dockerman为Lisaac第三方完整版（APK格式适配）
 
-name: libwrt
+name: libwrt优化版带docker
 
 # 禁用自动触发，仅保留手动触发
 on:
@@ -35,104 +35,15 @@ jobs:
     runs-on: ubuntu-22.04
 
     steps:
-    # 第一步：最大化构建空间（优先执行）
-    - name: 最大化构建空间
-      uses: easimon/maximize-build-space@master
-      with: 
-        root-reserve-mb: 2048
-        swap-size-mb: 1024
-        remove-dotnet: 'true'
-        remove-android: 'true'
-        remove-haskell: 'true'
-        remove-codeql: 'true'
-        remove-docker-images: 'true'
+    - name: 1. 拉取当前仓库全部文件
+      uses: actions/checkout@v4
 
-    - name: 清理前磁盘空间检查
+    - name: 2. 安装Ubuntu全套编译依赖
       run: |
-        echo "Before freeing up disk space"
-        echo "=============================================================================="
-        df -hT
-        echo "=============================================================================="
-
-    # 第二步：优化磁盘空间
-    - name: 优化磁盘空间
-      uses: "hugoalh/disk-space-optimizer-ghaction@v0.8.1"
-      with:
-        operate_sudo: "True"
-        general_include: ".+"
-        general_exclude: |-
-          ^GCC$
-          ^G\+\+$
-          Clang
-          LLVM
-          Python
-          Git
-        docker_include: ".+"
-        docker_prune: "True"
-        docker_clean: "True"
-        apt_prune: "True"
-        apt_clean: "True"
-        homebrew_prune: "False"
-        homebrew_clean: "False"
-        npm_prune: "False"
-        npm_clean: "False"
-        os_swap: "False"
-
-    - name: 清理后磁盘空间检查
-      run: |
-        echo "Free up disk space complete"
-        echo "=============================================================================="
-        df -hT
-        echo "=============================================================================="
-
-    # 第三步：关键磁盘空间检查
-    - name: 关键磁盘空间检查
-      run: |
-        echo "关键步骤前磁盘空间状态："
-        echo "=============================================================================="
-        df -hT
-        echo "可用空间检查："
-        AVAILABLE=$(df / --output=avail | tail -1)
-        if [ $AVAILABLE -lt 10485760 ]; then
-          echo "警告：磁盘可用空间不足10GB，可能影响编译"
-          echo "当前可用空间：$((AVAILABLE/1024/1024))GB"
-        fi
-        echo "=============================================================================="
-
-    - name: 检出代码
-      uses: actions/checkout@main
-
-    # 第四步：初始化编译环境
-    - name: 初始化编译环境
-      env:
-        DEBIAN_FRONTEND: noninteractive
-      run: |
-        # 先更新源
-        sudo -E apt-get -qq update
-        
-        # 分批安装，先安装核心编译工具
-        echo "安装核心编译工具..."
-        sudo -E apt-get -qq install build-essential gcc g++ make cmake git curl wget
-        
-        # 再安装OpenWrt特定依赖
-        echo "安装OpenWrt编译依赖..."
-        sudo -E apt-get -qq install ack antlr3 asciidoc autoconf automake autopoint binutils bison \
-        bzip2 ccache cpio device-tree-compiler fastjar flex gawk gettext gcc-multilib g++-multilib \
-        gperf haveged help2man intltool libc6-dev-i386 libelf-dev libglib2.0-dev libgmp3-dev libltdl-dev \
-        libmpc-dev libmpfr-dev libncurses5-dev libncursesw5-dev libreadline-dev libssl-dev libtool lrzsz \
-        mkisofs msmtp nano ninja-build p7zip p7zip-full patch pkgconf python2.7 python3 python3-pyelftools \
-        libpython3-dev qemu-utils rsync scons squashfs-tools subversion swig texinfo uglifyjs upx-ucl unzip \
-        vim xmlto xxd zlib1g-dev python3-setuptools
-        
-        # 清理
-        echo "清理不必要的包..."
-        sudo -E apt-get -qq autoremove --purge
-        sudo -E apt-get -qq clean
-        sudo rm -rf /etc/apt/sources.list.d/* /usr/local/lib/android /opt/ghc /usr/share/dotnet /usr/local/graalvm /usr/local/.ghcup \
-        /usr/local/share/powershell /usr/local/share/chromium /usr/local/lib/node_modules
-        sudo timedatectl set-timezone "$TZ"
-        sudo chown $USER:$GROUPS $GITHUB_WORKSPACE
-        echo "编译环境初始化完成"
+        sudo apt update
+        sudo apt install -y build-essential libncurses-dev gawk flex bison qemu-utils git wget unzip libssl-dev python3 python3-pip time rsync curl
+        sudo apt autoremove -y
+        sudo apt clean
 
     - name: 克隆源码
       working-directory: ./
@@ -178,24 +89,6 @@ jobs:
 
     - name: 安装软件源
       run: cd openwrt && ./scripts/feeds install -a
-
-    - name: 集成CPU温度自定义脚本
-      run: |
-        mkdir -p files/sbin
-        echo '#!/bin/sh' > files/sbin/cpuinfo
-        echo '# 适配IPQ60xx平台的CPU温度读取' >> files/sbin/cpuinfo
-        echo 'TEMP_PATH="/sys/class/thermal/thermal_zone0/temp"' >> files/sbin/cpuinfo
-        echo '' >> files/sbin/cpuinfo
-        echo 'if [ -r "$TEMP_PATH" ]; then' >> files/sbin/cpuinfo
-        echo '    raw_temp=$(cat "$TEMP_PATH")' >> files/sbin/cpuinfo
-        echo '    temp_int=$(( raw_temp / 1000 ))' >> files/sbin/cpuinfo
-        echo '    temp_dec=$(( (raw_temp / 100) % 10 ))' >> files/sbin/cpuinfo
-        echo '    cpu_temp="${temp_int}.${temp_dec}"' >> files/sbin/cpuinfo
-        echo '    echo "CPU ${cpu_temp}°C"' >> files/sbin/cpuinfo
-        echo 'else' >> files/sbin/cpuinfo
-        echo '    echo "CPU 0.0°C"' >> files/sbin/cpuinfo
-        echo 'fi' >> files/sbin/cpuinfo
-        chmod +x files/sbin/cpuinfo
 
     - name: 加载自定义配置
       run: |
