@@ -95,11 +95,6 @@ jobs:
     - name: 安装软件源
       run: cd openwrt && ./scripts/feeds install -a
 
-
-    - name: 更新软件源
-      run: cd openwrt && ./scripts/feeds update -a
-    - name: 安装软件源
-      run: cd openwrt && ./scripts/feeds install -a
     - name: 加载自定义配置
       run: |
         [ -e files ] && mv files openwrt/files
