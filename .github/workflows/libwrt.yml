@@ -78,16 +78,18 @@ jobs:
         set -e
         cd openwrt
         rm -rf package/utils/ucode
-        git clone --depth=1 --branch openwrt-25.12 https://github.com/openwrt/openwrt.git tmp-openwrt
+        git clone --depth=1 --branch main https://github.com/openwrt/openwrt.git tmp-openwrt
         if [ -d tmp-openwrt/package/utils/ucode ]; then
           mv tmp-openwrt/package/utils/ucode package/utils/ucode
-          echo "✅ ucode包已从openwrt‑25.12官方主树替换完成"
+          echo "✅ ucode包已从openwrt main分支替换完成"
         else
           echo "❌ 未找到ucode源码包" >&2
           ls -la tmp-openwrt/package/utils/
           exit 1
         fi
         rm -rf tmp-openwrt
+        # 替换后打印版本号确认
+        head -20 package/utils/ucode/Makefile
 
 
     - name: 更新软件源
