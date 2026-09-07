@@ -73,22 +73,28 @@ jobs:
         
         echo "第三方 Dockerman 替换完成，已适配APK格式"
 
-    # ==========新增步骤：升级ucode修复版本冲突【已修正lang路径】==========
+    # ==========修复ucode：ucode现在在openwrt主仓库，不在packages feed==========
     - name: 升级ucode包 修复luci依赖 ucode>=2026.02.27
       run: |
         set -e
         cd openwrt
         rm -rf package/ucode
-        git clone --depth=1 https://github.com/openwrt/packages.git tmp-packages
-        if [ -d tmp-packages/lang/ucode ]; then
-          mv tmp-packages/lang/ucode package/ucode
-          echo "✅ ucode包已替换为官方新版本"
+        git clone --depth=1 --branch openwrt-25.12 https://github.com/openwrt/openwrt.git tmp-openwrt
+        if [ -d tmp-openwrt/package/ucode ]; then
+          mv tmp-openwrt/package/ucode package/ucode
+          echo "✅ ucode包已从openwrt‑25.12官方主树替换完成"
         else
           echo "❌ 未找到ucode源码包" >&2
-          ls -la tmp-packages/lang/
+          ls -la tmp-openwrt/package/
           exit 1
         fi
-        rm -rf tmp-packages
+        rm -rf tmp-openwrt
+
+    - name: 更新软件源
+      run: cd openwrt && ./scripts/feeds update -a
+    - name: 安装软件源
+      run: cd openwrt && ./scripts/feeds install -a
+
 
     - name: 更新软件源
       run: cd openwrt && ./scripts/feeds update -a
