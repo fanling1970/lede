@@ -10,7 +10,7 @@
 # updated version ref: https://github.com/dxdf/ActionsBuildOpenWRT
 # 新增：替换官方简陋Dockerman为Lisaac第三方完整版（APK格式适配）
 
-name: libwrt优化版带docker
+name: libwrt1优化版带docker
 
 # 禁用自动触发，仅保留手动触发
 on:
